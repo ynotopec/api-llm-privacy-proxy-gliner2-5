@@ -29,6 +29,21 @@ source "$VENV_DIR/bin/activate"
 uv pip install --upgrade pip setuptools wheel
 uv pip install --upgrade -r requirements.txt
 
+echo "==> Verifying GLiNER2.5 runtime imports..."
+python - <<'PY'
+import gliner2
+import numpy
+import torch
+import transformers
+
+print(
+    "Runtime imports OK:",
+    f"numpy={numpy.__version__}",
+    f"torch={torch.__version__}",
+    f"transformers={transformers.__version__}",
+)
+PY
+
 if [[ ! -f ".env" ]]; then
   cp .env.example .env
   echo "==> Created .env from .env.example"

@@ -139,10 +139,26 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
 
     def _parse_result(self, text: str, result: Any) -> List[Tuple[int, int, str]]:
         spans: List[Tuple[int, int, str]] = []
-        if not isinstance(result, list):
+        entities: list[Any]
+        if isinstance(result, list):
+            entities = result
+        elif isinstance(result, dict):
+            if isinstance(result.get("entities"), list):
+                entities = result["entities"]
+            else:
+                entities = []
+                for label, values in result.items():
+                    if not isinstance(values, list):
+                        continue
+                    for value in values:
+                        if isinstance(value, dict):
+                            entities.append({"label": label, **value})
+                        elif isinstance(value, str):
+                            entities.append({"label": label, "text": value})
+        else:
             return spans
 
-        for ent in result:
+        for ent in entities:
             if not isinstance(ent, dict):
                 continue
             score = float(ent.get("score", ent.get("confidence", 1.0)) or 0.0)
@@ -150,6 +166,13 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 continue
             start = ent.get("start")
             end = ent.get("end")
+            raw_span = ent.get("span")
+            if (
+                (start is None or end is None)
+                and isinstance(raw_span, (list, tuple))
+                and len(raw_span) == 2
+            ):
+                start, end = raw_span
             value = ent.get("text") or ent.get("value") or ent.get("word")
             label = ent.get("label") or ent.get("entity_group") or "private"
 

@@ -34,13 +34,22 @@ class Settings:
     )
 
     # ── upstream ──────────────────────────────────────────────────
-    upstream_base_url: str = os.getenv("UPSTREAM_BASE_URL", "").rstrip("/")
-    upstream_api_key: str = os.getenv("UPSTREAM_API_KEY", "")
+    upstream_base_url: str = field(
+        default_factory=lambda: os.getenv("UPSTREAM_BASE_URL", "").rstrip("/")
+    )
+    upstream_api_key: str = field(
+        default_factory=lambda: os.getenv("UPSTREAM_API_KEY", "")
+    )
+    llm_requested: bool = field(
+        default_factory=lambda: _parse_bool(
+            os.getenv("LLM_ENABLED", "true"), True
+        )
+    )
 
     @property
     def llm_enabled(self) -> bool:
         """Whether the upstream LLM should be called."""
-        return bool(self.upstream_base_url)
+        return self.llm_requested and bool(self.upstream_base_url)
 
     # ── privacy model ─────────────────────────────────────────────
     privacy_model_id: str = field(

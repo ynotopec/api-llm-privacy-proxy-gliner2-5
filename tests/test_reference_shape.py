@@ -31,12 +31,20 @@ def test_gliner25_is_the_default_model(monkeypatch):
 def test_pytorch_runtime_dependency_is_installed_explicitly():
     assert "numpy>=1.26.0,<3.0.0" in REQUIREMENTS
     assert "torch>=2.2.0,<3.0.0" in REQUIREMENTS
+    assert "transformers>=4.46.0,<6.0.0" in REQUIREMENTS
 
 
 def test_privacy_model_can_still_be_configured(monkeypatch):
     monkeypatch.setenv("PRIVACY_MODEL_ID", "organization/custom-gliner2.5")
 
     assert Settings().privacy_model_id == "organization/custom-gliner2.5"
+
+
+def test_llm_enabled_setting_is_respected(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_BASE_URL", "http://localhost:8000/v1")
+    monkeypatch.setenv("LLM_ENABLED", "false")
+
+    assert Settings().llm_enabled is False
 
 
 def test_gliner25_extract_entities_uses_scored_spans():
@@ -69,6 +77,25 @@ def test_gliner25_extract_entities_uses_scored_spans():
         include_confidence=True,
         include_spans=True,
     )
+
+
+def test_gliner25_label_keyed_result_is_parsed():
+    sanitizer = GLiNER2Sanitizer(DEFAULT_PRIVACY_MODEL_ID, min_score=0.5)
+
+    spans = sanitizer._parse_result(
+        "Email jane@example.com",
+        {
+            "email": [
+                {
+                    "text": "jane@example.com",
+                    "confidence": 0.95,
+                    "span": [6, 22],
+                }
+            ]
+        },
+    )
+
+    assert spans == [(6, 22, "email")]
 
 
 def test_proxy_exposes_startup_and_shutdown_lifecycle():
