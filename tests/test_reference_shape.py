@@ -36,10 +36,10 @@ def test_gliner_runtime_dependencies_are_installed_explicitly():
     assert "peft>=0.13.0,<1.0.0" in REQUIREMENTS
 
 
-def test_installer_resolves_the_lazy_gliner25_extractor():
+def test_installer_resolves_the_lazy_gliner25_auto_extractor():
     installer = Path("install.sh").read_text()
 
-    assert "from gliner2 import Extractor" in installer
+    assert "from gliner2 import AutoExtractor" in installer
 
 
 def test_sanitizer_loads_the_extractor_architecture():
@@ -47,8 +47,8 @@ def test_sanitizer_loads_the_extractor_architecture():
         "privacy_proxy_core/sanitizers/gliner2.py"
     ).read_text()
 
-    assert "from gliner2 import Extractor" in sanitizer_source
-    assert "Extractor.from_pretrained(self.model_id)" in sanitizer_source
+    assert "from gliner2 import AutoExtractor" in sanitizer_source
+    assert "AutoExtractor.from_pretrained(self.model_id)" in sanitizer_source
     assert "GLiNER2.from_pretrained" not in sanitizer_source
 
 
@@ -110,6 +110,28 @@ def test_gliner25_label_keyed_result_is_parsed():
                     "span": [6, 22],
                 }
             ]
+        },
+    )
+
+    assert spans == [(6, 22, "email")]
+
+
+def test_gliner25_canonical_nested_result_is_parsed():
+    sanitizer = GLiNER2Sanitizer(DEFAULT_PRIVACY_MODEL_ID, min_score=0.5)
+
+    spans = sanitizer._parse_result(
+        "Email jane@example.com",
+        {
+            "entities": {
+                "email": [
+                    {
+                        "text": "jane@example.com",
+                        "confidence": 0.95,
+                        "start": 6,
+                        "end": 22,
+                    }
+                ]
+            }
         },
     )
 

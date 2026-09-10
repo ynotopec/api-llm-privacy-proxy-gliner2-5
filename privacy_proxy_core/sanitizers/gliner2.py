@@ -9,8 +9,6 @@ import logging
 import os
 from typing import Any, List, Tuple
 
-from huggingface_hub import hf_hub_download
-
 import torch
 from privacy_proxy_core.redaction import PrivacySanitizerBase, RedactionContext, RedactionStats
 
@@ -105,17 +103,19 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
             from gliner2 import AutoExtractor
+            from huggingface_hub import hf_hub_download
 
             try:
                 config_path = hf_hub_download(self.model_id, "tokenizer_config.json", repo_type="model")
-                import os
-                with open(config_path) as f:
+                with open(config_path, encoding="utf-8") as f:
                     tkn_cfg = json.load(f)
                 if "extra_special_tokens" in tkn_cfg and isinstance(tkn_cfg["extra_special_tokens"], list):
                     existing = tkn_cfg.get("additional_special_tokens", [])
-                    tkn_cfg["additional_special_tokens"] = list(set(existing + tkn_cfg["extra_special_tokens"]))
+                    tkn_cfg["additional_special_tokens"] = list(
+                        dict.fromkeys(existing + tkn_cfg["extra_special_tokens"])
+                    )
                     tkn_cfg["extra_special_tokens"] = {}
-                    with open(config_path, "w") as f:
+                    with open(config_path, "w", encoding="utf-8") as f:
                         json.dump(tkn_cfg, f)
                     log.info("Patched tokenizer_config.json extra_special_tokens to dict format")
             except Exception:
@@ -165,7 +165,13 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 entities = result["entities"]
             else:
                 entities = []
-                for label, values in result.items():
+                # GLiNER2.5 returns its normal result as
+                # {"entities": {"label": [{...}]}}.  Legacy checkpoints may
+                # return the label mapping directly, so accept both shapes.
+                grouped = result.get("entities", result)
+                if not isinstance(grouped, dict):
+                    return spans
+                for label, values in grouped.items():
                     if not isinstance(values, list):
                         continue
                     for value in values:
