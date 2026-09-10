@@ -20,7 +20,9 @@ APP_REVISION = "gliner2.5"
 
 
 class GLiNER2ProxySanitizer(PrivacySanitizerBase):
-    _delegate = None
+    def __init__(self) -> None:
+        super().__init__()
+        self._delegate: Any = None
 
     async def ensure_loaded(self) -> None:
         from privacy_proxy_core.sanitizers.gliner2 import GLiNER2Sanitizer
@@ -48,11 +50,20 @@ class GLiNER2ProxySanitizer(PrivacySanitizerBase):
         self._delegate.unload_if_idle()
         await self._delegate.ensure_loaded()
 
+    async def start_idle_watcher(self) -> None:
+        """Initialize the delegate and its idle watcher for app startup."""
+        await self.ensure_loaded()
+
+    async def stop_idle_watcher(self) -> None:
+        """Stop the delegate watcher and release model memory."""
+        if self._delegate is not None:
+            await self._delegate.stop_idle_watcher()
+
     async def sanitize_text(
         self, text: str, ctx: RedactionContext, stats: RedactionStats,
     ) -> str:
         if self._delegate is None:
-            return text
+            await self.ensure_loaded()
         return await self._delegate.sanitize_text(text, ctx, stats)
 
     def count_tokens(self, text: str) -> int:
@@ -88,25 +99,17 @@ app = FastAPI(title="OpenAI Privacy Filter Proxy GLiNER2.5", version="1.0.1")
 
 # ── routes (identiques aux autres repos via le core) ────────────
 
-async def _startup_sanitizer() -> None:
-    log = logging.getLogger("llm-privacy-proxy")
-    log.info("Starting GLiNER2 proxy revision=%s", APP_REVISION)
-    await sanitizer.ensure_loaded()
-
-
-async def _shutdown_sanitizer() -> None:
-    if hasattr(sanitizer, "_delegate") and sanitizer._delegate is not None:
-        await sanitizer._delegate.stop_idle_watcher()
-
 
 @app.on_event("startup")
 async def log_revision() -> None:
-    await _startup_sanitizer()
+    log = logging.getLogger("llm-privacy-proxy")
+    log.info("Starting GLiNER2 proxy revision=%s", APP_REVISION)
+    await sanitizer.start_idle_watcher()
 
 
 @app.on_event("shutdown")
 async def shutdown_sanitizer() -> None:
-    await _shutdown_sanitizer()
+    await sanitizer.stop_idle_watcher()
 
 
 def rewrite_request_model_ids(value: Any) -> Any:

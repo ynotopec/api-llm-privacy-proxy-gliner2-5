@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -13,6 +14,8 @@ sys.modules.setdefault(
 from privacy_proxy_core.redaction import RedactionContext, RedactionStats
 from privacy_proxy_core.sanitizers.gliner2 import GLiNER2Sanitizer
 from privacy_proxy_core.settings import DEFAULT_PRIVACY_MODEL_ID, Settings
+
+APP_SOURCE = Path("app.py").read_text()
 
 
 def test_gliner25_is_the_default_model(monkeypatch):
@@ -60,3 +63,10 @@ def test_gliner25_extract_entities_uses_scored_spans():
         include_confidence=True,
         include_spans=True,
     )
+
+
+def test_proxy_exposes_startup_and_shutdown_lifecycle():
+    assert "async def start_idle_watcher(self) -> None:" in APP_SOURCE
+    assert "async def stop_idle_watcher(self) -> None:" in APP_SOURCE
+    assert "await sanitizer.start_idle_watcher()" in APP_SOURCE
+    assert "await sanitizer.stop_idle_watcher()" in APP_SOURCE
