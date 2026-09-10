@@ -39,8 +39,17 @@ def test_gliner_runtime_dependencies_are_installed_explicitly():
 
 
 def test_default_checkpoint_uses_compatible_attention_backend():
-    assert "GLINER_ATTENTION_IMPLEMENTATION=eager" in ENV_EXAMPLE
+    assert "#GLINER_ATTENTION_IMPLEMENTATION=eager" in ENV_EXAMPLE
     assert "Valeur optimale/recommandée" in ENV_EXAMPLE
+
+
+def test_optional_defaults_are_commented_out_in_env_example():
+    assignments = [
+        line for line in ENV_EXAMPLE.splitlines()
+        if line and not line.startswith("#") and "=" in line
+    ]
+
+    assert assignments == []
 
 
 def test_installer_resolves_the_lazy_gliner25_auto_extractor():
