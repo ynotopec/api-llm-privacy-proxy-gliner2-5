@@ -29,6 +29,7 @@ def test_gliner25_is_the_default_model(monkeypatch):
 
 
 def test_pytorch_runtime_dependency_is_installed_explicitly():
+    assert "numpy>=1.26.0,<3.0.0" in REQUIREMENTS
     assert "torch>=2.2.0,<3.0.0" in REQUIREMENTS
 
 
@@ -75,3 +76,16 @@ def test_proxy_exposes_startup_and_shutdown_lifecycle():
     assert "async def stop_idle_watcher(self) -> None:" in APP_SOURCE
     assert "await sanitizer.start_idle_watcher()" in APP_SOURCE
     assert "await sanitizer.stop_idle_watcher()" in APP_SOURCE
+
+
+def test_idle_unload_can_run_without_application_settings(monkeypatch):
+    sanitizer = GLiNER2Sanitizer(DEFAULT_PRIVACY_MODEL_ID)
+    sanitizer.model = Mock()
+    sanitizer._model_device = "cpu"
+    sanitizer._last_used_at = 1.0
+    monkeypatch.setenv("MODEL_IDLE_UNLOAD_SECONDS", "1")
+
+    sanitizer.unload_if_idle()
+
+    assert sanitizer.model is None
+    assert sanitizer._model_device == "unloaded"

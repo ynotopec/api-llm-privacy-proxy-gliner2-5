@@ -57,7 +57,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 while True:
                     await asyncio.sleep(interval)
                     async with self._load_lock:
-                        self.unload_if_idle()  # type: ignore[call-arg]
+                        self.unload_if_idle()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -92,7 +92,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             log.warning("Cannot move GLiNER2 model to %s", device)
 
     async def ensure_loaded(self) -> None:
-        self.unload_if_idle()  # type: ignore[call-arg]
+        self.unload_if_idle()
         if self.model is not None:
             return
         async with self._load_lock:

@@ -45,7 +45,7 @@ class TGCPrivacySanitizer(PrivacySanitizerBase):
             torch.cuda.empty_cache()
 
     async def ensure_loaded(self) -> None:
-        self.unload_if_idle()  # type: ignore[call-arg]
+        self.unload_if_idle()
         if self.classifier is not None:
             return
         async with self._load_lock:
