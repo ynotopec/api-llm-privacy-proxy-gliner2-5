@@ -145,9 +145,18 @@ class PrivacySanitizerBase:
         import time
         self._last_used_at = time.monotonic()
 
-    def unload_if_idle(self, settings: Any) -> None:
-        """Unload model if idle beyond the configured timeout."""
-        timeout = settings.model_idle_unload_seconds
+    def unload_if_idle(self, settings: Any | None = None) -> None:
+        """Unload the model after the configured period of inactivity.
+
+        Standalone sanitizers do not own the application settings object, so
+        they use ``MODEL_IDLE_UNLOAD_SECONDS`` directly. Proxy callers may
+        still provide a settings instance explicitly.
+        """
+        if settings is None:
+            import os
+            timeout = int(os.getenv("MODEL_IDLE_UNLOAD_SECONDS", "300"))
+        else:
+            timeout = settings.model_idle_unload_seconds
         if timeout <= 0 or self._last_used_at == 0:
             return
         import time

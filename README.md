@@ -18,6 +18,17 @@ nano .env
 source run.sh 0.0.0.0 8088
 ```
 
+`./install.sh` installe également NumPy, PyTorch, Transformers, Accelerate et
+PEFT, requis par le moteur d'inférence GLiNER2.5, puis importe explicitement la
+classe `Extractor` pour vérifier toutes ses dépendances chargées paresseusement.
+Pour utiliser un build CUDA précis plutôt que le paquet PyPI par défaut,
+installer la version PyTorch adaptée au pilote depuis l'index officiel PyTorch
+dans le même venv.
+
+Le checkpoint `fastino/gliner2.5-multi-v1` utilise l'architecture `extractor` de
+GLiNER2.5. Il est donc chargé avec `gliner2.Extractor`, et non avec l'ancienne
+classe de modèle span `gliner2.GLiNER2`.
+
 ## Variables importantes
 
 ```bash

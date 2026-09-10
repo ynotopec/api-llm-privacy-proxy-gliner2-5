@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import logging
 import os
-import time
 from typing import Any, List, Tuple
+
+from huggingface_hub import hf_hub_download
 
 import torch
 from privacy_proxy_core.redaction import PrivacySanitizerBase, RedactionContext, RedactionStats
@@ -16,7 +18,7 @@ log = logging.getLogger("privacy-proxy.gliner2")
 
 
 class GLiNER2Sanitizer(PrivacySanitizerBase):
-    """Entity extraction via GLiNER2 (fastino/gliner2-...).
+    """Entity extraction via GLiNER2.5.
 
     Uses ``extract_entities`` with threshold + include_spans.
     """
@@ -58,7 +60,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 while True:
                     await asyncio.sleep(interval)
                     async with self._load_lock:
-                        self.unload_if_idle()  # type: ignore[call-arg]
+                        self.unload_if_idle()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -93,7 +95,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             log.warning("Cannot move GLiNER2 model to %s", device)
 
     async def ensure_loaded(self) -> None:
-        self.unload_if_idle()  # type: ignore[call-arg]
+        self.unload_if_idle()
         if self.model is not None:
             return
         async with self._load_lock:
@@ -102,9 +104,24 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             device = self._resolve_device(self.device)
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
-            from gliner2 import GLiNER2
+            from gliner2 import AutoExtractor
 
-            self.model = GLiNER2.from_pretrained(self.model_id)
+            try:
+                config_path = hf_hub_download(self.model_id, "tokenizer_config.json", repo_type="model")
+                import os
+                with open(config_path) as f:
+                    tkn_cfg = json.load(f)
+                if "extra_special_tokens" in tkn_cfg and isinstance(tkn_cfg["extra_special_tokens"], list):
+                    existing = tkn_cfg.get("additional_special_tokens", [])
+                    tkn_cfg["additional_special_tokens"] = list(set(existing + tkn_cfg["extra_special_tokens"]))
+                    tkn_cfg["extra_special_tokens"] = {}
+                    with open(config_path, "w") as f:
+                        json.dump(tkn_cfg, f)
+                    log.info("Patched tokenizer_config.json extra_special_tokens to dict format")
+            except Exception:
+                log.warning("Failed to patch tokenizer config, proceeding with original", exc_info=True)
+
+            self.model = AutoExtractor.from_pretrained(self.model_id)
             self._move_to_device(device)
             self._touch()
             log.info("GLiNER2 loaded on %s", device)
@@ -128,9 +145,6 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 include_confidence=True,
                 include_spans=True,
             )
-        except TypeError:
-            # Older GLiNER2 API
-            result = self.model.extract_entities(text, self.entity_types)
         except Exception as exc:
             log.exception("GLiNER2 inference failed")
             raise RuntimeError(f"privacy_filter_failed: {exc}") from exc
@@ -143,10 +157,26 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
 
     def _parse_result(self, text: str, result: Any) -> List[Tuple[int, int, str]]:
         spans: List[Tuple[int, int, str]] = []
-        if not isinstance(result, list):
+        entities: list[Any]
+        if isinstance(result, list):
+            entities = result
+        elif isinstance(result, dict):
+            if isinstance(result.get("entities"), list):
+                entities = result["entities"]
+            else:
+                entities = []
+                for label, values in result.items():
+                    if not isinstance(values, list):
+                        continue
+                    for value in values:
+                        if isinstance(value, dict):
+                            entities.append({"label": label, **value})
+                        elif isinstance(value, str):
+                            entities.append({"label": label, "text": value})
+        else:
             return spans
 
-        for ent in result:
+        for ent in entities:
             if not isinstance(ent, dict):
                 continue
             score = float(ent.get("score", ent.get("confidence", 1.0)) or 0.0)
@@ -154,6 +184,13 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 continue
             start = ent.get("start")
             end = ent.get("end")
+            raw_span = ent.get("span")
+            if (
+                (start is None or end is None)
+                and isinstance(raw_span, (list, tuple))
+                and len(raw_span) == 2
+            ):
+                start, end = raw_span
             value = ent.get("text") or ent.get("value") or ent.get("word")
             label = ent.get("label") or ent.get("entity_group") or "private"
 
