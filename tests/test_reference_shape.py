@@ -50,7 +50,6 @@ def test_sanitizer_loads_the_extractor_architecture():
 
     assert "from gliner2 import AutoExtractor" in sanitizer_source
     assert "AutoExtractor.from_pretrained(" in sanitizer_source
-    assert "map_location=device" in sanitizer_source
     assert "GLiNER2.from_pretrained" not in sanitizer_source
 
 
@@ -62,6 +61,9 @@ def test_gliner25_is_loaded_directly_on_the_resolved_device(
     loaded_model = Mock()
     auto_extractor = Mock()
     auto_extractor.from_pretrained.return_value = loaded_model
+    extractor_config = Mock()
+    normalized_config = Mock()
+    extractor_config.from_dict.return_value = normalized_config
     monkeypatch.setitem(
         sys.modules,
         "gliner2",
@@ -72,6 +74,11 @@ def test_gliner25_is_loaded_directly_on_the_resolved_device(
         "huggingface_hub",
         SimpleNamespace(hf_hub_download=lambda *args, **kwargs: tokenizer_config),
     )
+    monkeypatch.setitem(
+        sys.modules,
+        "gliner2.configuration",
+        SimpleNamespace(ExtractorConfig=extractor_config),
+    )
     sanitizer = GLiNER2Sanitizer(DEFAULT_PRIVACY_MODEL_ID, device="cuda")
 
     asyncio.run(sanitizer.ensure_loaded())
@@ -79,9 +86,13 @@ def test_gliner25_is_loaded_directly_on_the_resolved_device(
     auto_extractor.from_pretrained.assert_called_once_with(
         DEFAULT_PRIVACY_MODEL_ID,
         map_location="cuda",
+        config=normalized_config,
     )
     assert sanitizer.model is loaded_model
     assert sanitizer._model_device == "cuda"
+    extractor_config.from_dict.assert_called_once_with(
+        {"attn_implementation": "eager"}
+    )
 
 
 def test_privacy_model_can_still_be_configured(monkeypatch):

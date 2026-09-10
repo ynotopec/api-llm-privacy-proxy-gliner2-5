@@ -7,6 +7,7 @@ import gc
 import json
 import logging
 import os
+import warnings
 from typing import Any, List, Tuple
 
 import torch
@@ -88,8 +89,10 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
             from gliner2 import AutoExtractor
+            from gliner2.configuration import ExtractorConfig
             from huggingface_hub import hf_hub_download
 
+            extractor_config = None
             try:
                 config_path = hf_hub_download(self.model_id, "tokenizer_config.json", repo_type="model")
                 with open(config_path, encoding="utf-8") as f:
@@ -106,13 +109,43 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             except Exception:
                 log.warning("Failed to patch tokenizer config, proceeding with original", exc_info=True)
 
+            try:
+                config_path = hf_hub_download(
+                    self.model_id, "config.json", repo_type="model"
+                )
+                with open(config_path, encoding="utf-8") as f:
+                    config_data = json.load(f)
+                # Old boundary checkpoints contain a span-only option. Remove
+                # it before constructing the config instead of emitting a
+                # warning on every process start.
+                if config_data.get("architecture") == "boundary":
+                    config_data.pop("max_width", None)
+                config_data["attn_implementation"] = os.getenv(
+                    "GLINER_ATTENTION_IMPLEMENTATION", "eager"
+                )
+                extractor_config = ExtractorConfig.from_dict(config_data)
+            except Exception:
+                log.warning(
+                    "Failed to normalize extractor config, using checkpoint defaults",
+                    exc_info=True,
+                )
+
             # Boundary extractors must be constructed on the target device.
             # Moving the fully initialized wrapper afterwards is unsupported
             # by some GLiNER2.5 releases and leaves the model on CPU.
-            self.model = AutoExtractor.from_pretrained(
-                self.model_id,
-                map_location=device,
-            )
+            load_options = {"map_location": device}
+            if extractor_config is not None:
+                load_options["config"] = extractor_config
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"`torch\.jit\.script` is deprecated.*",
+                    category=FutureWarning,
+                )
+                self.model = AutoExtractor.from_pretrained(
+                    self.model_id,
+                    **load_options,
+                )
             self._model_device = device
             self._touch()
             log.info("GLiNER2 loaded on %s", device)

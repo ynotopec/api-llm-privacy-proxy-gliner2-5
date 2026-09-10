@@ -30,6 +30,9 @@ GLiNER2.5. Il est donc chargé avec `gliner2.AutoExtractor`, et non avec l'ancie
 classe de modèle span `gliner2.GLiNER2`. Le périphérique résolu est transmis via
 `map_location` pendant le chargement : le modèle boundary n'est pas déplacé vers
 CUDA après son initialisation.
+L'attention utilise `eager` par défaut, car l'encodeur DeBERTaV2 de ce checkpoint
+ne prend pas encore en charge SDPA. La variable `GLINER_ATTENTION_IMPLEMENTATION`
+permet de modifier ce choix pour un autre encodeur.
 
 ## Variables importantes
 
