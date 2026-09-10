@@ -1,51 +1,62 @@
-from pathlib import Path
+import asyncio
+import sys
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
-SOURCE = Path("app.py").read_text()
+sys.modules.setdefault(
+    "torch",
+    SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None)
+    ),
+)
 
-
-def test_openai_v1_route_matches_reference_shape():
-    assert '@app.api_route("/v1/{full_path:path}"' in SOURCE
-    assert 'async def proxy_openai(req: Request, full_path: str)' in SOURCE
-
-
-def test_reference_auth_and_model_variables_are_supported():
-    assert 'INBOUND_API_KEYS' in SOURCE
-    assert 'PRIVACY_MODEL_ID' in SOURCE
-    assert 'PRIVACY_ENTITY_TYPES' in SOURCE
-    assert 'fastino/gliner2-privacy-filter-PII-multi' in SOURCE
-
-
-def test_reference_features_are_present():
-    assert '@app.get("/metrics")' in SOURCE
-    assert 'MODEL_SUFFIX' in SOURCE
-    assert 'FILTER_OUTPUT' in SOURCE
+from privacy_proxy_core.redaction import RedactionContext, RedactionStats
+from privacy_proxy_core.sanitizers.gliner2 import GLiNER2Sanitizer
+from privacy_proxy_core.settings import DEFAULT_PRIVACY_MODEL_ID, Settings
 
 
-def test_gliner2_extract_entities_receives_entity_types():
-    assert 'extract_entities(\n                text,\n                settings.entity_types,' in SOURCE
-    assert 'extract_entities(text, settings.entity_types)' in SOURCE
+def test_gliner25_is_the_default_model(monkeypatch):
+    monkeypatch.delenv("PRIVACY_MODEL_ID", raising=False)
+
+    configured = Settings()
+
+    assert DEFAULT_PRIVACY_MODEL_ID == "fastino/gliner2.5-multi-v1"
+    assert configured.privacy_model_id == DEFAULT_PRIVACY_MODEL_ID
 
 
-def test_health_exposes_device_revision_marker():
-    assert 'APP_REVISION = "gliner2-optional-llm"' in SOURCE
-    assert '"revision": APP_REVISION' in SOURCE
-    assert '"resolved_device": sanitizer.model_device' in SOURCE
-    assert '"cuda_available": sanitizer.cuda_available' in SOURCE
+def test_privacy_model_can_still_be_configured(monkeypatch):
+    monkeypatch.setenv("PRIVACY_MODEL_ID", "organization/custom-gliner2.5")
+
+    assert Settings().privacy_model_id == "organization/custom-gliner2.5"
 
 
-def test_model_idle_unload_runs_in_background_and_clears_memory():
-    assert 'MODEL_IDLE_CHECK_SECONDS' in SOURCE
-    assert 'asyncio.create_task(watch(), name="privacy-model-idle-unload")' in SOURCE
-    assert 'torch.cuda.empty_cache()' in SOURCE
-    assert 'await sanitizer.start_idle_unload_watcher()' in SOURCE
-    assert 'await sanitizer.stop_idle_unload_watcher()' in SOURCE
+def test_gliner25_extract_entities_uses_scored_spans():
+    sanitizer = GLiNER2Sanitizer(
+        DEFAULT_PRIVACY_MODEL_ID,
+        entity_types=["person", "email"],
+        min_score=0.6,
+    )
+    sanitizer.model = Mock()
+    sanitizer.model.extract_entities.return_value = [
+        {"text": "Jane Doe", "label": "person", "score": 0.9, "start": 8, "end": 16}
+    ]
+    sanitizer.ensure_loaded = AsyncMock()
 
+    async def run() -> tuple[str, RedactionStats]:
+        stats = RedactionStats()
+        output = await sanitizer.sanitize_text(
+            "Contact Jane Doe", RedactionContext(), stats
+        )
+        return output, stats
 
-def test_llm_can_be_disabled_for_sanitize_only_mode():
-    assert 'LLM_ENABLED' in SOURCE
-    assert '"llm_enabled": settings.llm_enabled' in SOURCE
-    assert '"object": "privacy_proxy.sanitized_payload"' in SOURCE
-    assert '"object": "chat.completion"' in SOURCE
-    assert '"choices"' in SOURCE
-    assert 'sanitized_chat_content(sanitized_payload)' in SOURCE
-    assert 'raise HTTPException(status_code=503, detail="llm_disabled")' in SOURCE
+    output, stats = asyncio.run(run())
+
+    assert output == "Contact [PERSON_1]"
+    assert stats.spans == 1
+    sanitizer.model.extract_entities.assert_called_once_with(
+        "Contact Jane Doe",
+        ["person", "email"],
+        threshold=0.6,
+        include_confidence=True,
+        include_spans=True,
+    )

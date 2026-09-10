@@ -6,7 +6,6 @@ import asyncio
 import gc
 import logging
 import os
-import time
 from typing import Any, List, Tuple
 
 import torch
@@ -16,7 +15,7 @@ log = logging.getLogger("privacy-proxy.gliner2")
 
 
 class GLiNER2Sanitizer(PrivacySanitizerBase):
-    """Entity extraction via GLiNER2 (fastino/gliner2-...).
+    """Entity extraction via GLiNER2.5.
 
     Uses ``extract_entities`` with threshold + include_spans.
     """
@@ -128,9 +127,6 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 include_confidence=True,
                 include_spans=True,
             )
-        except TypeError:
-            # Older GLiNER2 API
-            result = self.model.extract_entities(text, self.entity_types)
         except Exception as exc:
             log.exception("GLiNER2 inference failed")
             raise RuntimeError(f"privacy_filter_failed: {exc}") from exc

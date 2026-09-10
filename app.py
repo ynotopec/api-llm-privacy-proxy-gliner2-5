@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import gc
 import json
 import logging
 import os
@@ -103,14 +101,12 @@ async def _shutdown_sanitizer() -> None:
 
 @app.on_event("startup")
 async def log_revision() -> None:
-    log = logging.getLogger("llm-privacy-proxy")
-    log.info("Starting OpenAI Privacy Filter Proxy GLiNER2.5 revision=%s", APP_REVISION)
-    await sanitizer.start_idle_watcher()
+    await _startup_sanitizer()
 
 
 @app.on_event("shutdown")
 async def shutdown_sanitizer() -> None:
-    await sanitizer.stop_idle_watcher()
+    await _shutdown_sanitizer()
 
 
 def rewrite_request_model_ids(value: Any) -> Any:

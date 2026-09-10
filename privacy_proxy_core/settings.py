@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+DEFAULT_PRIVACY_MODEL_ID = "fastino/gliner2.5-multi-v1"
+
 
 def _parse_bool(value: str, default: bool) -> bool:
     if value.lower() in ("1", "true", "yes", "on"):
@@ -41,7 +43,11 @@ class Settings:
         return bool(self.upstream_base_url)
 
     # ── privacy model ─────────────────────────────────────────────
-    privacy_model_id: str = os.getenv("PRIVACY_MODEL_ID", "")
+    privacy_model_id: str = field(
+        default_factory=lambda: os.getenv(
+            "PRIVACY_MODEL_ID", DEFAULT_PRIVACY_MODEL_ID
+        )
+    )
 
     device: str = os.getenv("DEVICE", "auto")
     torch_dtype: str = os.getenv("TORCH_DTYPE", "auto")
