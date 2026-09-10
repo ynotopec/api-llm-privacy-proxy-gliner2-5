@@ -18,10 +18,12 @@ nano .env
 source run.sh 0.0.0.0 8088
 ```
 
-`./install.sh` installe également NumPy, PyTorch et Transformers, requis par
-GLiNER2.5, puis vérifie immédiatement leurs imports. Pour utiliser un build CUDA
-précis plutôt que le paquet PyPI par défaut, installer la version PyTorch adaptée
-au pilote depuis l'index officiel PyTorch dans le même venv.
+`./install.sh` installe également NumPy, PyTorch, Transformers, Accelerate et
+PEFT, requis par le moteur d'inférence GLiNER2.5, puis importe explicitement la
+classe `GLiNER2` pour vérifier toutes ses dépendances chargées paresseusement.
+Pour utiliser un build CUDA précis plutôt que le paquet PyPI par défaut,
+installer la version PyTorch adaptée au pilote depuis l'index officiel PyTorch
+dans le même venv.
 
 ## Variables importantes
 

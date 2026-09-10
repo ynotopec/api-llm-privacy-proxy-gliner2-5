@@ -28,10 +28,18 @@ def test_gliner25_is_the_default_model(monkeypatch):
     assert configured.privacy_model_id == DEFAULT_PRIVACY_MODEL_ID
 
 
-def test_pytorch_runtime_dependency_is_installed_explicitly():
+def test_gliner_runtime_dependencies_are_installed_explicitly():
     assert "numpy>=1.26.0,<3.0.0" in REQUIREMENTS
     assert "torch>=2.2.0,<3.0.0" in REQUIREMENTS
     assert "transformers>=4.46.0,<6.0.0" in REQUIREMENTS
+    assert "accelerate>=1.0.0,<2.0.0" in REQUIREMENTS
+    assert "peft>=0.13.0,<1.0.0" in REQUIREMENTS
+
+
+def test_installer_resolves_the_lazy_gliner2_engine():
+    installer = Path("install.sh").read_text()
+
+    assert "from gliner2 import GLiNER2" in installer
 
 
 def test_privacy_model_can_still_be_configured(monkeypatch):

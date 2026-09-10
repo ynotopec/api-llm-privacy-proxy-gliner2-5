@@ -31,10 +31,14 @@ uv pip install --upgrade -r requirements.txt
 
 echo "==> Verifying GLiNER2.5 runtime imports..."
 python - <<'PY'
-import gliner2
 import numpy
 import torch
 import transformers
+from gliner2 import GLiNER2
+
+# Accessing GLiNER2 (rather than only importing the top-level package) is
+# intentional: gliner2 resolves its inference engine lazily.
+assert GLiNER2 is not None
 
 print(
     "Runtime imports OK:",

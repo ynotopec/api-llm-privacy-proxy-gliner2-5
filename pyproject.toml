@@ -11,6 +11,8 @@ dependencies = [
   "numpy>=1.26.0,<3.0.0",
   "torch>=2.2.0,<3.0.0",
   "transformers>=4.46.0,<6.0.0",
+  "accelerate>=1.0.0,<2.0.0",
+  "peft>=0.13.0,<1.0.0",
   "gliner2>=0.1.0",
 ]
 
