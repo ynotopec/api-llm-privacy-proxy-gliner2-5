@@ -7,9 +7,8 @@ import gc
 import json
 import logging
 import os
+import warnings
 from typing import Any, List, Tuple
-
-from huggingface_hub import hf_hub_download
 
 import torch
 from privacy_proxy_core.redaction import PrivacySanitizerBase, RedactionContext, RedactionStats
@@ -79,21 +78,6 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 pass
         self._on_idle_unload()
 
-    def _move_to_device(self, device: str) -> None:
-        if self.model is None:
-            return
-        try:
-            if hasattr(self.model, "to"):
-                self.model.to(device)
-            else:
-                inner = getattr(self.model, "model", None)
-                if hasattr(inner, "to"):
-                    inner.to(device)
-            self._model_device = device
-        except Exception:
-            self._model_device = "unknown"
-            log.warning("Cannot move GLiNER2 model to %s", device)
-
     async def ensure_loaded(self) -> None:
         self.unload_if_idle()
         if self.model is not None:
@@ -105,24 +89,64 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
             from gliner2 import AutoExtractor
+            from gliner2.configuration import ExtractorConfig
+            from huggingface_hub import hf_hub_download
 
+            extractor_config = None
             try:
                 config_path = hf_hub_download(self.model_id, "tokenizer_config.json", repo_type="model")
-                import os
-                with open(config_path) as f:
+                with open(config_path, encoding="utf-8") as f:
                     tkn_cfg = json.load(f)
                 if "extra_special_tokens" in tkn_cfg and isinstance(tkn_cfg["extra_special_tokens"], list):
                     existing = tkn_cfg.get("additional_special_tokens", [])
-                    tkn_cfg["additional_special_tokens"] = list(set(existing + tkn_cfg["extra_special_tokens"]))
+                    tkn_cfg["additional_special_tokens"] = list(
+                        dict.fromkeys(existing + tkn_cfg["extra_special_tokens"])
+                    )
                     tkn_cfg["extra_special_tokens"] = {}
-                    with open(config_path, "w") as f:
+                    with open(config_path, "w", encoding="utf-8") as f:
                         json.dump(tkn_cfg, f)
                     log.info("Patched tokenizer_config.json extra_special_tokens to dict format")
             except Exception:
                 log.warning("Failed to patch tokenizer config, proceeding with original", exc_info=True)
 
-            self.model = AutoExtractor.from_pretrained(self.model_id)
-            self._move_to_device(device)
+            try:
+                config_path = hf_hub_download(
+                    self.model_id, "config.json", repo_type="model"
+                )
+                with open(config_path, encoding="utf-8") as f:
+                    config_data = json.load(f)
+                # Old boundary checkpoints contain a span-only option. Remove
+                # it before constructing the config instead of emitting a
+                # warning on every process start.
+                if config_data.get("architecture") == "boundary":
+                    config_data.pop("max_width", None)
+                config_data["attn_implementation"] = os.getenv(
+                    "GLINER_ATTENTION_IMPLEMENTATION", "eager"
+                )
+                extractor_config = ExtractorConfig.from_dict(config_data)
+            except Exception:
+                log.warning(
+                    "Failed to normalize extractor config, using checkpoint defaults",
+                    exc_info=True,
+                )
+
+            # Boundary extractors must be constructed on the target device.
+            # Moving the fully initialized wrapper afterwards is unsupported
+            # by some GLiNER2.5 releases and leaves the model on CPU.
+            load_options = {"map_location": device}
+            if extractor_config is not None:
+                load_options["config"] = extractor_config
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"`torch\.jit\.script` is deprecated.*",
+                    category=FutureWarning,
+                )
+                self.model = AutoExtractor.from_pretrained(
+                    self.model_id,
+                    **load_options,
+                )
+            self._model_device = device
             self._touch()
             log.info("GLiNER2 loaded on %s", device)
 
@@ -165,7 +189,13 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 entities = result["entities"]
             else:
                 entities = []
-                for label, values in result.items():
+                # GLiNER2.5 returns its normal result as
+                # {"entities": {"label": [{...}]}}.  Legacy checkpoints may
+                # return the label mapping directly, so accept both shapes.
+                grouped = result.get("entities", result)
+                if not isinstance(grouped, dict):
+                    return spans
+                for label, values in grouped.items():
                     if not isinstance(values, list):
                         continue
                     for value in values:

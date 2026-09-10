@@ -20,14 +20,19 @@ source run.sh 0.0.0.0 8088
 
 `./install.sh` installe également NumPy, PyTorch, Transformers, Accelerate et
 PEFT, requis par le moteur d'inférence GLiNER2.5, puis importe explicitement la
-classe `Extractor` pour vérifier toutes ses dépendances chargées paresseusement.
+classe `AutoExtractor` pour vérifier toutes ses dépendances chargées paresseusement.
 Pour utiliser un build CUDA précis plutôt que le paquet PyPI par défaut,
 installer la version PyTorch adaptée au pilote depuis l'index officiel PyTorch
 dans le même venv.
 
 Le checkpoint `fastino/gliner2.5-multi-v1` utilise l'architecture `extractor` de
-GLiNER2.5. Il est donc chargé avec `gliner2.Extractor`, et non avec l'ancienne
-classe de modèle span `gliner2.GLiNER2`.
+GLiNER2.5. Il est donc chargé avec `gliner2.AutoExtractor`, et non avec l'ancienne
+classe de modèle span `gliner2.GLiNER2`. Le périphérique résolu est transmis via
+`map_location` pendant le chargement : le modèle boundary n'est pas déplacé vers
+CUDA après son initialisation.
+L'attention utilise `eager` par défaut, car l'encodeur DeBERTaV2 de ce checkpoint
+ne prend pas encore en charge SDPA. La variable `GLINER_ATTENTION_IMPLEMENTATION`
+permet de modifier ce choix pour un autre encodeur.
 
 ## Variables importantes
 
@@ -40,6 +45,7 @@ PRIVACY_MODEL_ID='fastino/gliner2.5-multi-v1'
 PRIVACY_ENTITY_TYPES='person,full_name,first_name,last_name,date_of_birth,email,phone_number,address,street_address,city,state_or_region,postal_code,country,government_id,national_id_number,passport_number,drivers_license_number,tax_id,bank_account,account_number,iban,payment_card,card_number,username,ip_address,password,api_key,access_token,secret'
 DEVICE=auto  # auto => cuda si torch.cuda.is_available(), sinon cpu
 TORCH_DTYPE=auto
+GLINER_ATTENTION_IMPLEMENTATION=eager  # valeur optimale pour le checkpoint DeBERTaV2 par défaut
 FILTER_OUTPUT=true
 MODEL_SUFFIX='-anonym'
 MODEL_IDLE_UNLOAD_SECONDS=300  # <= 0 désactive le déchargement automatique
