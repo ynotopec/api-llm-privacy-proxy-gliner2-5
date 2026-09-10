@@ -18,6 +18,10 @@ nano .env
 source run.sh 0.0.0.0 8088
 ```
 
+`./install.sh` installe également PyTorch, requis par GLiNER2.5. Pour utiliser
+un build CUDA précis plutôt que le paquet PyPI par défaut, installer la version
+PyTorch adaptée au pilote depuis l'index officiel PyTorch dans le même venv.
+
 ## Variables importantes
 
 ```bash

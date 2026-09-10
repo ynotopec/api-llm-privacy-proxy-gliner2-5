@@ -16,6 +16,7 @@ from privacy_proxy_core.sanitizers.gliner2 import GLiNER2Sanitizer
 from privacy_proxy_core.settings import DEFAULT_PRIVACY_MODEL_ID, Settings
 
 APP_SOURCE = Path("app.py").read_text()
+REQUIREMENTS = Path("requirements.txt").read_text().splitlines()
 
 
 def test_gliner25_is_the_default_model(monkeypatch):
@@ -25,6 +26,10 @@ def test_gliner25_is_the_default_model(monkeypatch):
 
     assert DEFAULT_PRIVACY_MODEL_ID == "fastino/gliner2.5-multi-v1"
     assert configured.privacy_model_id == DEFAULT_PRIVACY_MODEL_ID
+
+
+def test_pytorch_runtime_dependency_is_installed_explicitly():
+    assert "torch>=2.2.0,<3.0.0" in REQUIREMENTS
 
 
 def test_privacy_model_can_still_be_configured(monkeypatch):
