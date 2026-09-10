@@ -77,21 +77,6 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 pass
         self._on_idle_unload()
 
-    def _move_to_device(self, device: str) -> None:
-        if self.model is None:
-            return
-        try:
-            if hasattr(self.model, "to"):
-                self.model.to(device)
-            else:
-                inner = getattr(self.model, "model", None)
-                if hasattr(inner, "to"):
-                    inner.to(device)
-            self._model_device = device
-        except Exception:
-            self._model_device = "unknown"
-            log.warning("Cannot move GLiNER2 model to %s", device)
-
     async def ensure_loaded(self) -> None:
         self.unload_if_idle()
         if self.model is not None:
@@ -121,8 +106,14 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             except Exception:
                 log.warning("Failed to patch tokenizer config, proceeding with original", exc_info=True)
 
-            self.model = AutoExtractor.from_pretrained(self.model_id)
-            self._move_to_device(device)
+            # Boundary extractors must be constructed on the target device.
+            # Moving the fully initialized wrapper afterwards is unsupported
+            # by some GLiNER2.5 releases and leaves the model on CPU.
+            self.model = AutoExtractor.from_pretrained(
+                self.model_id,
+                map_location=device,
+            )
+            self._model_device = device
             self._touch()
             log.info("GLiNER2 loaded on %s", device)
 

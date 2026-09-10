@@ -27,7 +27,9 @@ dans le même venv.
 
 Le checkpoint `fastino/gliner2.5-multi-v1` utilise l'architecture `extractor` de
 GLiNER2.5. Il est donc chargé avec `gliner2.AutoExtractor`, et non avec l'ancienne
-classe de modèle span `gliner2.GLiNER2`.
+classe de modèle span `gliner2.GLiNER2`. Le périphérique résolu est transmis via
+`map_location` pendant le chargement : le modèle boundary n'est pas déplacé vers
+CUDA après son initialisation.
 
 ## Variables importantes
 
