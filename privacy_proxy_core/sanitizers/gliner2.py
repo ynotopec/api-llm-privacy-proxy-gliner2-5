@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import logging
 import os
 from typing import Any, List, Tuple
+
+from huggingface_hub import hf_hub_download
 
 import torch
 from privacy_proxy_core.redaction import PrivacySanitizerBase, RedactionContext, RedactionStats
@@ -101,9 +104,24 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             device = self._resolve_device(self.device)
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
-            from gliner2 import Extractor
+            from gliner2 import AutoExtractor
 
-            self.model = Extractor.from_pretrained(self.model_id)
+            try:
+                config_path = hf_hub_download(self.model_id, "tokenizer_config.json", repo_type="model")
+                import os
+                with open(config_path) as f:
+                    tkn_cfg = json.load(f)
+                if "extra_special_tokens" in tkn_cfg and isinstance(tkn_cfg["extra_special_tokens"], list):
+                    existing = tkn_cfg.get("additional_special_tokens", [])
+                    tkn_cfg["additional_special_tokens"] = list(set(existing + tkn_cfg["extra_special_tokens"]))
+                    tkn_cfg["extra_special_tokens"] = {}
+                    with open(config_path, "w") as f:
+                        json.dump(tkn_cfg, f)
+                    log.info("Patched tokenizer_config.json extra_special_tokens to dict format")
+            except Exception:
+                log.warning("Failed to patch tokenizer config, proceeding with original", exc_info=True)
+
+            self.model = AutoExtractor.from_pretrained(self.model_id)
             self._move_to_device(device)
             self._touch()
             log.info("GLiNER2 loaded on %s", device)
