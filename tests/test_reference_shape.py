@@ -18,6 +18,7 @@ from privacy_proxy_core.settings import DEFAULT_PRIVACY_MODEL_ID, Settings
 
 APP_SOURCE = Path("app.py").read_text()
 REQUIREMENTS = Path("requirements.txt").read_text().splitlines()
+ENV_EXAMPLE = Path(".env.example").read_text()
 
 
 def test_gliner25_is_the_default_model(monkeypatch):
@@ -35,6 +36,11 @@ def test_gliner_runtime_dependencies_are_installed_explicitly():
     assert "transformers>=4.46.0,<6.0.0" in REQUIREMENTS
     assert "accelerate>=1.0.0,<2.0.0" in REQUIREMENTS
     assert "peft>=0.13.0,<1.0.0" in REQUIREMENTS
+
+
+def test_default_checkpoint_uses_compatible_attention_backend():
+    assert "GLINER_ATTENTION_IMPLEMENTATION=eager" in ENV_EXAMPLE
+    assert "Valeur optimale/recommandée" in ENV_EXAMPLE
 
 
 def test_installer_resolves_the_lazy_gliner25_auto_extractor():

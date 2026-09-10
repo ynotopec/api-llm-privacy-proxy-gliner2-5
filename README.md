@@ -45,6 +45,7 @@ PRIVACY_MODEL_ID='fastino/gliner2.5-multi-v1'
 PRIVACY_ENTITY_TYPES='person,full_name,first_name,last_name,date_of_birth,email,phone_number,address,street_address,city,state_or_region,postal_code,country,government_id,national_id_number,passport_number,drivers_license_number,tax_id,bank_account,account_number,iban,payment_card,card_number,username,ip_address,password,api_key,access_token,secret'
 DEVICE=auto  # auto => cuda si torch.cuda.is_available(), sinon cpu
 TORCH_DTYPE=auto
+GLINER_ATTENTION_IMPLEMENTATION=eager  # valeur optimale pour le checkpoint DeBERTaV2 par défaut
 FILTER_OUTPUT=true
 MODEL_SUFFIX='-anonym'
 MODEL_IDLE_UNLOAD_SECONDS=300  # <= 0 désactive le déchargement automatique
