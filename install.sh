@@ -34,11 +34,11 @@ python - <<'PY'
 import numpy
 import torch
 import transformers
-from gliner2 import GLiNER2
+from gliner2 import Extractor
 
-# Accessing GLiNER2 (rather than only importing the top-level package) is
-# intentional: gliner2 resolves its inference engine lazily.
-assert GLiNER2 is not None
+# Accessing Extractor (rather than only importing the top-level package) is
+# intentional: gliner2 resolves its GLiNER2.5 inference engine lazily.
+assert Extractor is not None
 
 print(
     "Runtime imports OK:",

@@ -101,9 +101,9 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             device = self._resolve_device(self.device)
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
-            from gliner2 import GLiNER2
+            from gliner2 import Extractor
 
-            self.model = GLiNER2.from_pretrained(self.model_id)
+            self.model = Extractor.from_pretrained(self.model_id)
             self._move_to_device(device)
             self._touch()
             log.info("GLiNER2 loaded on %s", device)

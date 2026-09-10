@@ -36,10 +36,20 @@ def test_gliner_runtime_dependencies_are_installed_explicitly():
     assert "peft>=0.13.0,<1.0.0" in REQUIREMENTS
 
 
-def test_installer_resolves_the_lazy_gliner2_engine():
+def test_installer_resolves_the_lazy_gliner25_extractor():
     installer = Path("install.sh").read_text()
 
-    assert "from gliner2 import GLiNER2" in installer
+    assert "from gliner2 import Extractor" in installer
+
+
+def test_sanitizer_loads_the_extractor_architecture():
+    sanitizer_source = Path(
+        "privacy_proxy_core/sanitizers/gliner2.py"
+    ).read_text()
+
+    assert "from gliner2 import Extractor" in sanitizer_source
+    assert "Extractor.from_pretrained(self.model_id)" in sanitizer_source
+    assert "GLiNER2.from_pretrained" not in sanitizer_source
 
 
 def test_privacy_model_can_still_be_configured(monkeypatch):
