@@ -67,6 +67,12 @@ class Settings:
     )
     min_entity_score: float = float(os.getenv("MIN_ENTITY_SCORE", "0.50"))
     max_string_chars: int = int(os.getenv("MAX_STRING_CHARS", "200000"))
+    max_request_bytes: int = int(os.getenv("MAX_REQUEST_BYTES", "10485760"))
+    max_json_depth: int = int(os.getenv("MAX_JSON_DEPTH", "64"))
+    max_json_nodes: int = int(os.getenv("MAX_JSON_NODES", "100000"))
+    max_concurrent_inferences: int = int(
+        os.getenv("MAX_CONCURRENT_INFERENCES", "1")
+    )
     model_idle_unload_seconds: int = int(
         os.getenv("MODEL_IDLE_UNLOAD_SECONDS", "300")
     )
