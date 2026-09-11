@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -104,12 +105,19 @@ app = FastAPI(title="OpenAI Privacy Filter Proxy GLiNER2.5", version="1.0.1")
 async def log_revision() -> None:
     log = logging.getLogger("llm-privacy-proxy")
     log.info("Starting GLiNER2 proxy revision=%s", APP_REVISION)
+    app.state.upstream_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(600.0, connect=30.0),
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+    )
     await sanitizer.start_idle_watcher()
 
 
 @app.on_event("shutdown")
 async def shutdown_sanitizer() -> None:
     await sanitizer.stop_idle_watcher()
+    client = getattr(app.state, "upstream_client", None)
+    if client is not None:
+        await client.aclose()
 
 
 def rewrite_request_model_ids(value: Any) -> Any:
@@ -157,13 +165,13 @@ def require_auth(req: Request, *, metrics_auth: bool = False) -> None:
     if not settings.inbound_api_keys:
         return
     token = extract_bearer(req)
-    if token not in settings.inbound_api_keys:
+    if not any(secrets.compare_digest(token, key) for key in settings.inbound_api_keys):
         raise HTTPException(status_code=401, detail="invalid_or_missing_api_token")
 
 
 def build_upstream_headers(req: Request) -> Dict[str, str]:
     excluded = {
-        "host", "content-length", "connection", "keep-alive",
+        "host", "content-length", "authorization", "connection", "keep-alive",
         "proxy-authenticate", "proxy-authorization",
         "te", "trailers", "transfer-encoding", "upgrade",
     }
@@ -208,10 +216,9 @@ async def forward_request(
         raise HTTPException(status_code=503, detail="llm_disabled")
     full_path = unsuffix_model_path(full_path)
     url = f"{settings.upstream_base_url}/{full_path}"
-    timeout = httpx.Timeout(600.0, connect=30.0)
+    client: httpx.AsyncClient = app.state.upstream_client
 
     if stream:
-        client = httpx.AsyncClient(timeout=timeout)
         upstream_req = client.build_request(
             method=req.method,
             url=url,
@@ -223,12 +230,15 @@ async def forward_request(
 
         async def close_upstream() -> None:
             await upstream_stream.aclose()
-            await client.aclose()
 
         content_type = upstream_stream.headers.get("content-type", "application/json")
         headers = {
             k: v for k, v in upstream_stream.headers.items()
-            if k.lower() not in {"content-length", "connection"}
+            if k.lower() not in {
+                "content-length", "connection", "keep-alive",
+                "proxy-authenticate", "proxy-authorization", "te", "trailers",
+                "transfer-encoding", "upgrade",
+            }
         }
         return StreamingResponse(
             upstream_stream.aiter_bytes(),
@@ -238,14 +248,13 @@ async def forward_request(
             background=BackgroundTask(close_upstream),
         )
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        upstream = await client.request(
-            method=req.method,
-            url=url,
-            headers=build_upstream_headers(req),
-            params=dict(req.query_params),
-            json=sanitized_payload,
-        )
+    upstream = await client.request(
+        method=req.method,
+        url=url,
+        headers=build_upstream_headers(req),
+        params=dict(req.query_params),
+        json=sanitized_payload,
+    )
 
     content_type = upstream.headers.get("content-type", "application/json")
     headers = {
@@ -297,6 +306,36 @@ def sanitized_chat_content(payload: Any) -> str:
     return fallback
 
 
+def validate_payload_limits(payload: Any) -> None:
+    """Reject payloads that could bypass filtering or exhaust recursion/memory."""
+    stack: list[tuple[Any, int]] = [(payload, 0)]
+    nodes = 0
+    while stack:
+        value, depth = stack.pop()
+        nodes += 1
+        if nodes > settings.max_json_nodes:
+            raise HTTPException(status_code=413, detail="too_many_json_values")
+        if depth > settings.max_json_depth:
+            raise HTTPException(status_code=413, detail="json_too_deep")
+        if isinstance(value, str) and len(value) > settings.max_string_chars:
+            # Passing an oversized value through unchanged would disclose PII.
+            raise HTTPException(status_code=413, detail="string_too_large_to_filter")
+        if isinstance(value, dict):
+            stack.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            stack.extend((item, depth + 1) for item in value)
+
+
+async def read_limited_body(req: Request) -> bytes:
+    """Read a possibly chunked request without buffering past the limit."""
+    body = bytearray()
+    async for chunk in req.stream():
+        if len(body) + len(chunk) > settings.max_request_bytes:
+            raise HTTPException(status_code=413, detail="request_body_too_large")
+        body.extend(chunk)
+    return bytes(body)
+
+
 def llm_disabled_response_payload(full_path: str, sanitized_payload: Any, in_stats: RedactionStats) -> dict[str, Any]:
     if full_path == "chat/completions" and isinstance(sanitized_payload, dict):
         return {
@@ -338,12 +377,13 @@ async def health() -> Dict[str, Any]:
     return {
         "status": "ok",
         "model": settings.privacy_model_id,
-        "upstream": settings.upstream_base_url,
+        "upstream_configured": bool(settings.upstream_base_url),
         "llm_enabled": settings.llm_enabled,
         "filter_output": settings.filter_output,
         "model_suffix": settings.model_suffix,
         "device": settings.device,
         "model_idle_unload_seconds": settings.model_idle_unload_seconds,
+        "max_concurrent_inferences": settings.max_concurrent_inferences,
         "revision": APP_REVISION,
     }
 
@@ -367,10 +407,21 @@ async def proxy_openai(req: Request, full_path: str) -> Response:
         upstream_resp = await forward_request(req, full_path, sanitized_payload=None)
         return add_response_model_suffixes(upstream_resp, full_path)
 
+    content_length = req.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.max_request_bytes:
+                raise HTTPException(status_code=413, detail="request_body_too_large")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_content_length")
+
+    body = await read_limited_body(req)
     try:
-        payload = await req.json()
+        payload = json.loads(body)
     except Exception:
         raise HTTPException(status_code=400, detail="expected_json_body")
+
+    validate_payload_limits(payload)
 
     start = time.perf_counter()
 

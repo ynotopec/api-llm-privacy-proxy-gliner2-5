@@ -36,6 +36,9 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
         self._model_device: str = "unloaded"
         self._cuda_available: bool | None = None
         self._load_lock = asyncio.Lock()
+        self._inference_semaphore = asyncio.Semaphore(
+            max(1, int(os.getenv("MAX_CONCURRENT_INFERENCES", "1")))
+        )
         self._unload_task: asyncio.Task[None] | None = None
 
     def _on_idle_unload(self) -> None:
@@ -158,17 +161,19 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
         if not text or len(text) > max_chars:
             return text
 
-        await self.ensure_loaded()
-        self._touch()
-
         try:
-            result = self.model.extract_entities(
-                text,
-                self.entity_types,
-                threshold=self.min_score,
-                include_confidence=True,
-                include_spans=True,
-            )
+            async with self._inference_semaphore:
+                await self.ensure_loaded()
+                self._touch()
+                model = self.model
+                result = await asyncio.to_thread(
+                    model.extract_entities,
+                    text,
+                    self.entity_types,
+                    threshold=self.min_score,
+                    include_confidence=True,
+                    include_spans=True,
+                )
         except Exception as exc:
             log.exception("GLiNER2 inference failed")
             raise RuntimeError(f"privacy_filter_failed: {exc}") from exc
