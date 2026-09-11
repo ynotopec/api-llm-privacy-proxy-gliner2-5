@@ -152,6 +152,10 @@ curl -s http://127.0.0.1:8088/metrics \
 * Les modèles exposés au client sont suffixés avec `-anonym` (`MODEL_SUFFIX`) et seul le champ `model` OpenAI de premier niveau est désuffixé avant envoi à l’upstream.
 * Les configurations utilisateur comme `thinking` / `reasoning` sont préservées telles quelles par défaut.
 * `FILTER_OUTPUT=false` permet de désactiver le filtrage des réponses si la latence est prioritaire.
+* Le streaming SSE est refusé avec HTTP 400 lorsque `FILTER_OUTPUT=true` : une
+  entité peut traverser plusieurs chunks, donc relayer ces chunks sans filtre
+  contournerait la garantie de confidentialité. Définir explicitement
+  `FILTER_OUTPUT=false` pour autoriser `stream=true`.
 * Le modèle peut rater des PII, surtout hors anglais ou avec formats métier spécifiques.
 * Pour contexte gouvernement / médical / RH / finance, valider sur corpus interne et ajouter éventuellement règles regex métier ou fine-tuning.
 

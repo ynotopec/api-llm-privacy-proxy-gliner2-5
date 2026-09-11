@@ -423,6 +423,16 @@ async def proxy_openai(req: Request, full_path: str) -> Response:
 
     validate_payload_limits(payload)
 
+    wants_stream = bool(isinstance(payload, dict) and payload.get("stream") is True)
+    if wants_stream and settings.filter_output:
+        # Passing SSE through untouched would bypass the configured output
+        # privacy boundary.  Incremental entity detection is unsafe because a
+        # PII span can be split across arbitrary event/chunk boundaries.
+        raise HTTPException(
+            status_code=400,
+            detail="streaming_requires_filter_output_disabled",
+        )
+
     start = time.perf_counter()
 
     sanitized_payload, in_stats = await sanitizer.sanitize_payload(payload, settings)
@@ -437,7 +447,6 @@ async def proxy_openai(req: Request, full_path: str) -> Response:
         response.headers["x-privacy-filter-latency-ms"] = str(round((time.perf_counter() - start) * 1000, 2))
         return response
 
-    wants_stream = bool(isinstance(payload, dict) and payload.get("stream") is True)
     if wants_stream:
         return await forward_request(req, full_path, sanitized_payload, stream=True)
 

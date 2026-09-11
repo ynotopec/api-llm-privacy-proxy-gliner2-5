@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 sys.modules.setdefault(
     "torch",
@@ -83,3 +84,49 @@ def test_inbound_token_is_not_forwarded_upstream(monkeypatch):
 
     assert "authorization" not in headers
     assert headers["openai-organization"] == "org-test"
+
+
+def test_streaming_is_rejected_when_output_filtering_is_enabled(monkeypatch):
+    """SSE must not silently bypass the configured response sanitizer."""
+    monkeypatch.setattr(app.settings, "inbound_api_keys", [])
+    monkeypatch.setattr(app.settings, "filter_output", True)
+
+    body = b'{"model":"test","stream":true,"messages":[]}'
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(app.proxy_openai(request, "chat/completions"))
+
+    assert error.value.status_code == 400
+    assert error.value.detail == "streaming_requires_filter_output_disabled"
+
+
+def test_prometheus_escapes_untrusted_entity_labels():
+    metrics = app.GlobalMetrics()
+
+    async def render():
+        await metrics.add(1, 1, {'email"\\\ninjected': 1})
+        return await metrics.prometheus()
+
+    output = asyncio.run(render())
+
+    assert 'label="email\\"\\\\\\ninjected"' in output
+    assert "\ninjected" not in output
