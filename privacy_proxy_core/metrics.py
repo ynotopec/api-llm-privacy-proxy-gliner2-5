@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Dict
 
 
@@ -61,7 +62,16 @@ class GlobalMetrics:
                 f"{self.filtered_spans_total}",
             ]
             for label, count in sorted(self.filtered_by_label.items()):
-                safe = label.replace('"', '\"')
+                # Prometheus label values escape all backslashes, quotes, and
+                # line feeds.  Without this, a model-provided entity label can
+                # corrupt the exposition format or inject a fake metric line.
+                safe = re.sub(
+                    r'[\\"\n]',
+                    lambda match: {"\\": r"\\", '"': r'\"', "\n": r"\n"}[
+                        match.group(0)
+                    ],
+                    str(label),
+                )
                 lines.append(
                     f"privacy_proxy_filtered_spans_by_label_total"
                     f'{{label="{safe}"}} {count}'

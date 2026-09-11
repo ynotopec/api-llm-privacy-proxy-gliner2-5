@@ -81,7 +81,7 @@ kubectl -n privacy-proxy create secret generic privacy-proxy-credentials \
 helm upgrade --install privacy-proxy ./deploy/helm/privacy-proxy \
   --namespace privacy-proxy \
   --set image.repository=registry.example.com/privacy-proxy \
-  --set image.tag=1.0.1 \
+  --set image.tag=1.0.2 \
   --set existingSecret=privacy-proxy-credentials \
   --set config.UPSTREAM_BASE_URL=http://llm.default.svc.cluster.local:8000/v1
 ```
@@ -152,6 +152,11 @@ curl -s http://127.0.0.1:8088/metrics \
 * Les modèles exposés au client sont suffixés avec `-anonym` (`MODEL_SUFFIX`) et seul le champ `model` OpenAI de premier niveau est désuffixé avant envoi à l’upstream.
 * Les configurations utilisateur comme `thinking` / `reasoning` sont préservées telles quelles par défaut.
 * `FILTER_OUTPUT=false` permet de désactiver le filtrage des réponses si la latence est prioritaire.
+* Avec `FILTER_OUTPUT=true`, une requête `stream=true` est mise en mémoire
+  tampon : l'upstream produit d'abord une réponse complète, le proxy la filtre,
+  puis la renvoie sous forme d'un événement SSE suivi de `[DONE]`. Cette méthode
+  conserve la confidentialité mais reporte le premier événement jusqu'à la fin
+  de la génération. `FILTER_OUTPUT=false` conserve le streaming progressif.
 * Le modèle peut rater des PII, surtout hors anglais ou avec formats métier spécifiques.
 * Pour contexte gouvernement / médical / RH / finance, valider sur corpus interne et ajouter éventuellement règles regex métier ou fine-tuning.
 
@@ -183,4 +188,25 @@ sudo journalctl -u api-llm-privacy-proxy-gliner2 -f
 
 ## Dépannage
 
-Si les logs contiennent encore `GLiNER2.extract_entities() missing 1 required positional argument: 'entity_types'`, le service lancé n'utilise pas ce code. Vérifier `/health` : le champ `revision` doit valoir `gliner2.5`, puis relancer `./install.sh` et redémarrer le service systemd.
+Si les logs contiennent encore `GLiNER2.extract_entities() missing 1 required positional argument: 'entity_types'`, le service lancé n'utilise pas ce code. Vérifier `/health` : le champ `revision` doit valoir `gliner2.5-buffered-streaming`, puis relancer `./install.sh` et redémarrer le service systemd.
+
+De même, `streaming_requires_filter_output_disabled` n'existe plus dans cette
+révision. Si cette erreur apparaît encore, elle provient d'un ancien processus
+ou d'une ancienne image. Vérifier d'abord :
+
+```bash
+curl -s http://127.0.0.1:8088/health | jq -r .revision
+# résultat attendu : gliner2.5-buffered-streaming
+```
+
+Pour Kubernetes, publier l'image avec un nouveau tag (par exemple `1.0.2`) puis
+mettre à jour explicitement le release afin d'éviter la réutilisation d'une
+image locale mise en cache :
+
+```bash
+helm upgrade --install privacy-proxy ./deploy/helm/privacy-proxy \
+  --namespace privacy-proxy \
+  --set image.repository=registry.example.com/privacy-proxy \
+  --set image.tag=1.0.2
+kubectl -n privacy-proxy rollout status deployment/privacy-proxy
+```

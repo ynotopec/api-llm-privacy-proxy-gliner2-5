@@ -1,5 +1,7 @@
 import asyncio
+import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -83,3 +85,54 @@ def test_inbound_token_is_not_forwarded_upstream(monkeypatch):
 
     assert "authorization" not in headers
     assert headers["openai-organization"] == "org-test"
+
+
+def test_buffered_streaming_response_is_a_chat_completion_chunk():
+    source = app.JSONResponse(
+        {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "model": "test-anonym",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "[PERSON_1]"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    )
+
+    response = app.buffered_streaming_response(
+        "chat/completions", json.loads(source.body), source
+    )
+
+    async def collect_body():
+        return b"".join([chunk async for chunk in response.body_iterator])
+
+    body = asyncio.run(collect_body()).decode()
+    assert response.media_type == "text/event-stream"
+    assert '"object":"chat.completion.chunk"' in body
+    assert '"delta":{"role":"assistant","content":"[PERSON_1]"}' in body
+    assert "data: [DONE]" in body
+    assert '"message"' not in body
+
+
+def test_revision_identifies_buffered_streaming_build():
+    assert app.APP_REVISION == "gliner2.5-buffered-streaming"
+    assert "streaming_requires_filter_output_disabled" not in Path(
+        app.__file__
+    ).read_text(encoding="utf-8")
+
+
+def test_prometheus_escapes_untrusted_entity_labels():
+    metrics = app.GlobalMetrics()
+
+    async def render():
+        await metrics.add(1, 1, {'email"\\\ninjected': 1})
+        return await metrics.prometheus()
+
+    output = asyncio.run(render())
+
+    assert 'label="email\\"\\\\\\ninjected"' in output
+    assert "\ninjected" not in output
