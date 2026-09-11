@@ -62,6 +62,36 @@ MAX_CONCURRENT_INFERENCES=1     # protège RAM/VRAM; augmenter après mesure de 
 pytest -q
 ```
 
+## Déploiement Kubernetes avec Helm (optionnel)
+
+Le chart de production se trouve dans `deploy/helm/privacy-proxy`. Il active par
+défaut un cache modèle persistant, des ressources CPU/mémoire, des probes et un
+contexte de sécurité non-root avec un système de fichiers en lecture seule.
+
+Construire et publier d'abord l'image, puis installer le chart en utilisant un
+Secret Kubernetes existant (méthode recommandée afin de ne pas versionner les
+clés dans un fichier de valeurs) :
+
+```bash
+kubectl create namespace privacy-proxy
+kubectl -n privacy-proxy create secret generic privacy-proxy-credentials \
+  --from-literal=INBOUND_API_KEYS='change-me' \
+  --from-literal=UPSTREAM_API_KEY=''
+
+helm upgrade --install privacy-proxy ./deploy/helm/privacy-proxy \
+  --namespace privacy-proxy \
+  --set image.repository=registry.example.com/privacy-proxy \
+  --set image.tag=1.0.1 \
+  --set existingSecret=privacy-proxy-credentials \
+  --set config.UPSTREAM_BASE_URL=http://llm.default.svc.cluster.local:8000/v1
+```
+
+Pour un nœud NVIDIA, utiliser une image PyTorch compatible CUDA et ajouter
+`resources.limits.nvidia.com/gpu: "1"` dans un fichier de valeurs. Ajuster aussi
+la classe et la taille du PVC, les ressources et les contraintes de placement au
+cluster. Un exemple complet des options est disponible dans
+`deploy/helm/privacy-proxy/values.yaml`.
+
 ## Appel OpenAI-compatible
 
 ```bash
