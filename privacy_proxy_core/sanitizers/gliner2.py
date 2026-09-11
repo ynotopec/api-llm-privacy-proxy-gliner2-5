@@ -89,6 +89,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             if self.model is not None:
                 return
             device = self._resolve_device(self.device)
+            self._cuda_available = bool(torch.cuda.is_available())
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
             from gliner2 import AutoExtractor
@@ -230,14 +231,20 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             label = ent.get("label") or ent.get("entity_group") or "private"
 
             if not isinstance(start, int) or not isinstance(end, int):
-                if value:
-                    idx = text.find(str(value))
-                    if idx >= 0:
-                        start, end = idx, idx + len(str(value))
-                    else:
-                        continue
-                else:
+                if not value:
                     continue
+                # Some extractor versions omit offsets.  Redact every exact
+                # occurrence rather than only the first one; otherwise a
+                # repeated secret can remain in the forwarded request.
+                raw_value = str(value)
+                cursor = 0
+                while True:
+                    idx = text.find(raw_value, cursor)
+                    if idx < 0:
+                        break
+                    spans.append((idx, idx + len(raw_value), str(label)))
+                    cursor = idx + len(raw_value)
+                continue
 
             start, end = int(start), int(end)
             if 0 <= start < end <= len(text):
