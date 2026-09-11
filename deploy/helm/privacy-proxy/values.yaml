@@ -1,0 +1,114 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ynotopec/api-llm-privacy-proxy-gliner2.5
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+
+service:
+  type: ClusterIP
+  port: 8088
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: privacy-proxy.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 4Gi
+  limits:
+    cpu: "4"
+    memory: 12Gi
+    # nvidia.com/gpu: "1"
+
+# Environment values that are safe to store in a ConfigMap.
+config:
+  UPSTREAM_BASE_URL: ""
+  LLM_ENABLED: "true"
+  PRIVACY_MODEL_ID: fastino/gliner2.5-multi-v1
+  DEVICE: auto
+  TORCH_DTYPE: auto
+  GLINER_ATTENTION_IMPLEMENTATION: eager
+  FILTER_OUTPUT: "true"
+  MODEL_SUFFIX: -anonym
+  MODEL_IDLE_UNLOAD_SECONDS: "300"
+  MODEL_IDLE_CHECK_SECONDS: "30"
+  MAX_REQUEST_BYTES: "10485760"
+  MAX_JSON_DEPTH: "64"
+  MAX_JSON_NODES: "100000"
+  MAX_CONCURRENT_INFERENCES: "1"
+
+# Prefer existingSecret in production. It must contain INBOUND_API_KEYS and may
+# contain UPSTREAM_API_KEY and HF_TOKEN.
+existingSecret: ""
+secrets:
+  inboundApiKeys: ""
+  upstreamApiKey: ""
+  hfToken: ""
+
+modelCache:
+  # Use a PVC to avoid downloading the model again after a pod replacement.
+  persistence:
+    enabled: true
+    existingClaim: ""
+    storageClass: ""
+    accessModes: ["ReadWriteOnce"]
+    size: 10Gi
+
+startupProbe:
+  failureThreshold: 60
+  periodSeconds: 10
+livenessProbe:
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+readinessProbe:
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+

@@ -1,0 +1,18 @@
+{{- if and .Values.modelCache.persistence.enabled (not .Values.modelCache.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "privacy-proxy.fullname" . }}-model-cache
+  labels:
+    {{- include "privacy-proxy.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.modelCache.persistence.accessModes | nindent 4 }}
+  {{- with .Values.modelCache.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.modelCache.persistence.size }}
+{{- end }}
+
