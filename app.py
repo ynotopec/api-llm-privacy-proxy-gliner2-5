@@ -175,6 +175,14 @@ def build_upstream_headers(req: Request) -> Dict[str, str]:
         "proxy-authenticate", "proxy-authorization",
         "te", "trailers", "transfer-encoding", "upgrade",
     }
+    # RFC 9110 permits Connection to name additional hop-by-hop fields.  A
+    # client must not be able to smuggle one of those fields to the upstream.
+    connection_tokens = {
+        token.strip().lower()
+        for token in req.headers.get("connection", "").split(",")
+        if token.strip()
+    }
+    excluded.update(connection_tokens)
     headers = {k: v for k, v in req.headers.items() if k.lower() not in excluded}
     if settings.upstream_api_key:
         headers["authorization"] = f"Bearer {settings.upstream_api_key}"
@@ -185,6 +193,21 @@ def build_upstream_headers(req: Request) -> Dict[str, str]:
 def headers_for_modified_body(resp: Response) -> Dict[str, str]:
     excluded = {"content-length", "content-encoding", "transfer-encoding", "connection"}
     return {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+
+
+def upstream_response_headers(headers: httpx.Headers) -> Dict[str, str]:
+    """Remove hop-by-hop headers, including fields named by Connection."""
+    excluded = {
+        "content-length", "content-encoding", "transfer-encoding", "connection",
+        "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+        "trailer", "trailers", "upgrade",
+    }
+    excluded.update(
+        token.strip().lower()
+        for token in headers.get("connection", "").split(",")
+        if token.strip()
+    )
+    return {k: v for k, v in headers.items() if k.lower() not in excluded}
 
 
 def response_models_endpoint(full_path: str) -> bool:
@@ -223,23 +246,21 @@ async def forward_request(
             method=req.method,
             url=url,
             headers=build_upstream_headers(req),
-            params=dict(req.query_params),
+            params=req.query_params.multi_items(),
             json=sanitized_payload,
         )
-        upstream_stream = await client.send(upstream_req, stream=True)
+        try:
+            upstream_stream = await client.send(upstream_req, stream=True)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="upstream_timeout") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail="upstream_unavailable") from exc
 
         async def close_upstream() -> None:
             await upstream_stream.aclose()
 
         content_type = upstream_stream.headers.get("content-type", "application/json")
-        headers = {
-            k: v for k, v in upstream_stream.headers.items()
-            if k.lower() not in {
-                "content-length", "connection", "keep-alive",
-                "proxy-authenticate", "proxy-authorization", "te", "trailers",
-                "transfer-encoding", "upgrade",
-            }
-        }
+        headers = upstream_response_headers(upstream_stream.headers)
         return StreamingResponse(
             upstream_stream.aiter_bytes(),
             status_code=upstream_stream.status_code,
@@ -248,19 +269,21 @@ async def forward_request(
             background=BackgroundTask(close_upstream),
         )
 
-    upstream = await client.request(
-        method=req.method,
-        url=url,
-        headers=build_upstream_headers(req),
-        params=dict(req.query_params),
-        json=sanitized_payload,
-    )
+    try:
+        upstream = await client.request(
+            method=req.method,
+            url=url,
+            headers=build_upstream_headers(req),
+            params=req.query_params.multi_items(),
+            json=sanitized_payload,
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="upstream_timeout") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="upstream_unavailable") from exc
 
     content_type = upstream.headers.get("content-type", "application/json")
-    headers = {
-        k: v for k, v in upstream.headers.items()
-        if k.lower() not in {"content-length", "content-encoding", "transfer-encoding", "connection"}
-    }
+    headers = upstream_response_headers(upstream.headers)
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
@@ -421,6 +444,7 @@ def buffered_streaming_response(
 
 @app.get("/health")
 async def health() -> Dict[str, Any]:
+    delegate = sanitizer._delegate
     return {
         "status": "ok",
         "model": settings.privacy_model_id,
@@ -429,6 +453,9 @@ async def health() -> Dict[str, Any]:
         "filter_output": settings.filter_output,
         "model_suffix": settings.model_suffix,
         "device": settings.device,
+        "resolved_device": getattr(delegate, "_model_device", "unknown"),
+        "model_loaded": bool(delegate is not None and delegate.model is not None),
+        "cuda_available": getattr(delegate, "_cuda_available", None),
         "model_idle_unload_seconds": settings.model_idle_unload_seconds,
         "max_concurrent_inferences": settings.max_concurrent_inferences,
         "revision": APP_REVISION,

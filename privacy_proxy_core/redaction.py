@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -40,15 +41,15 @@ class RedactionContext:
 
 
 def normalize_label(label: str) -> str:
-    """Strip BIOES prefixes and lowercase."""
-    return (
-        (label or "private")
-        .replace("B-", "")
-        .replace("I-", "")
-        .replace("E-", "")
-        .replace("S-", "")
-        .lower()
-    )
+    """Return a bounded, placeholder-safe entity label.
+
+    Labels ultimately originate in model output.  Restricting their alphabet
+    prevents malformed labels from breaking the ``[LABEL_N]`` placeholder
+    syntax or producing control characters in API responses.
+    """
+    normalized = re.sub(r"^(?:B|I|E|S)-", "", label or "private", flags=re.I)
+    normalized = re.sub(r"[^a-z0-9_]+", "_", normalized.lower()).strip("_")
+    return (normalized or "private")[:64]
 
 
 async def sanitize_payload(

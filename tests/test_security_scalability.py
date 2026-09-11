@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -85,6 +86,49 @@ def test_inbound_token_is_not_forwarded_upstream(monkeypatch):
 
     assert "authorization" not in headers
     assert headers["openai-organization"] == "org-test"
+
+
+def test_connection_nominated_request_header_is_not_forwarded(monkeypatch):
+    monkeypatch.setattr(app.settings, "upstream_api_key", "")
+    request = SimpleNamespace(
+        headers={"connection": "x-internal, keep-alive", "x-internal": "secret"}
+    )
+
+    headers = app.build_upstream_headers(request)
+
+    assert "x-internal" not in headers
+    assert "connection" not in headers
+
+
+def test_connection_nominated_response_header_is_not_forwarded():
+    headers = httpx.Headers(
+        {"connection": "x-upstream-internal", "x-upstream-internal": "secret"}
+    )
+
+    assert app.upstream_response_headers(headers) == {}
+
+
+def test_spanless_repeated_entities_are_all_redacted():
+    sanitizer = GLiNER2Sanitizer("test/model", min_score=0.5)
+    text = "jane@example.com and jane@example.com"
+
+    spans = sanitizer._parse_result(
+        text,
+        {"email": [{"text": "jane@example.com", "confidence": 0.9}]},
+    )
+    output = sanitizer._build_output(
+        text, spans, RedactionContext(), RedactionStats()
+    )
+
+    assert output == "[EMAIL_1] and [EMAIL_1]"
+
+
+def test_entity_labels_cannot_break_placeholder_syntax():
+    ctx = RedactionContext()
+
+    placeholder = ctx.placeholder('B-email"]\\nmalicious', "secret")
+
+    assert placeholder == "[EMAIL_MALICIOUS_1]"
 
 
 def test_buffered_streaming_response_is_a_chat_completion_chunk():
