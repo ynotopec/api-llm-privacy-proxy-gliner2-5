@@ -9,6 +9,32 @@ Client OpenAI-compatible
 → redaction PII : `[EMAIL_1]`, `[PERSON_1]`, etc.
 → upstream OpenAI-compatible
 
+### Streaming : capacités réelles
+
+L'API publique présentée par la
+[documentation GLiNER2](https://github.com/fastino-ai/GLiNER2) et utilisée avec
+le [checkpoint GLiNER2.5](https://huggingface.co/fastino/gliner2.5-multi-v1)
+est `extract_entities(text, entity_types, ...)` : elle reçoit une chaîne
+complète et retourne ensuite les entités et leurs positions. Elle ne fournit pas
+d'API d'inférence incrémentale qui accepterait des tokens entrants et produirait
+des spans au fil de l'eau.
+L'implémentation appelle donc une seule extraction sur chaque chaîne complète,
+hors de la boucle événementielle.
+
+| Étape | Streaming | Pourquoi |
+|---|---|---|
+| Corps HTTP utilisateur → proxy | Transport éventuellement découpé, mais pas inférence GLiNER progressive | Le JSON et chaque texte doivent être complets avant détection. |
+| Proxy → GLiNER | Non | `extract_entities` retourne les spans après l'inférence sur le texte complet. |
+| Proxy → LLM | Requête JSON complète | Le LLM ne reçoit le prompt qu'après anonymisation. |
+| LLM → utilisateur avec `stream=true` | **Oui, SSE natif** | Le proxy relaie immédiatement le flux upstream, sans seconde passe GLiNER. |
+| LLM → utilisateur avec `stream=false` | Non | Réponse JSON OpenAI-compatible normale. |
+
+Découper artificiellement le prompt en fragments pour appeler GLiNER plus tôt
+ne réduit pas sûrement la latence : une entité peut chevaucher deux fragments et
+le contexte utile à sa classification serait perdu. Pour ce proxy HTTP, la
+latence minimale sûre est donc **une inférence GLiNER complète avant l'appel au
+LLM**, puis le streaming natif de la réponse.
+
 ## Installation
 
 ```bash
@@ -46,7 +72,6 @@ PRIVACY_ENTITY_TYPES='person,full_name,first_name,last_name,date_of_birth,email,
 DEVICE=auto  # auto => cuda si torch.cuda.is_available(), sinon cpu
 TORCH_DTYPE=auto
 GLINER_ATTENTION_IMPLEMENTATION=eager  # valeur optimale pour le checkpoint DeBERTaV2 par défaut
-FILTER_OUTPUT=true
 MODEL_SUFFIX='-anonym'
 MODEL_IDLE_UNLOAD_SECONDS=300  # <= 0 désactive le déchargement automatique
 MODEL_IDLE_CHECK_SECONDS=30     # fréquence de vérification en tâche de fond
@@ -128,12 +153,6 @@ Si `resolved_device=cpu` avec `DEVICE=auto`, le conteneur/process ne voit pas CU
 
 Le proxy reprend le comportement mémoire du projet de référence `ynotopec/api-llm-privacy-proxy` (`MODEL_IDLE_UNLOAD_SECONDS`), mais ajoute une tâche de fond : le modèle est déchargé même si aucune nouvelle requête ne vient déclencher le contrôle d'inactivité. Le déchargement supprime la référence au modèle, lance `gc.collect()` puis vide le cache CUDA quand PyTorch voit un GPU.
 
-Pour réduire la latence, désactiver le filtrage de sortie si non nécessaire :
-
-```bash
-FILTER_OUTPUT=false
-```
-
 ## Metrics
 
 ```bash
@@ -143,7 +162,12 @@ curl -s http://127.0.0.1:8088/metrics \
 
 ## Notes production
 
-* Par défaut, le proxy filtre les entrées envoyées au LLM et les réponses du LLM (`FILTER_OUTPUT=true`).
+* Par défaut, le proxy suit le pipeline `prompt utilisateur → GLiNER → LLM → client` :
+  le prompt complet est filtré avant l'appel au LLM, puis sa réponse est relayée
+  directement. Avec `stream=true`, les chunks SSE arrivent donc progressivement.
+  L'inférence GLiNER constitue le seul délai avant l'appel upstream : dès qu'elle
+  est terminée, le proxy transmet le même `stream=true` à l'API OpenAI-compatible
+  et relaie chaque chunk sans attendre la fin de la génération.
 * Les chaînes trop longues pour être filtrées et les payloads hors limites sont refusés avec HTTP 413 plutôt que transmis sans anonymisation.
 * Le client HTTP upstream est mutualisé (pool de connexions). L'inférence synchrone est déportée hors de la boucle événementielle et sa concurrence est bornée par `MAX_CONCURRENT_INFERENCES`.
 * En production, définir `INBOUND_API_KEYS`; sans cette variable, les routes `/v1` sont volontairement publiques.
@@ -151,12 +175,8 @@ curl -s http://127.0.0.1:8088/metrics \
 * `LLM_ENABLED=false` rend le LLM optionnel : les requêtes POST `/v1/chat/completions` gardent le format OpenAI-compatible (`choices[0].message.content`) avec le contenu anonymisé, sans appeler `UPSTREAM_BASE_URL`. Les autres endpoints POST retournent le payload anonymisé et les statistiques de filtrage.
 * Les modèles exposés au client sont suffixés avec `-anonym` (`MODEL_SUFFIX`) et seul le champ `model` OpenAI de premier niveau est désuffixé avant envoi à l’upstream.
 * Les configurations utilisateur comme `thinking` / `reasoning` sont préservées telles quelles par défaut.
-* `FILTER_OUTPUT=false` permet de désactiver le filtrage des réponses si la latence est prioritaire.
-* Avec `FILTER_OUTPUT=true`, une requête `stream=true` est mise en mémoire
-  tampon : l'upstream produit d'abord une réponse complète, le proxy la filtre,
-  puis la renvoie sous forme d'un événement SSE suivi de `[DONE]`. Cette méthode
-  conserve la confidentialité mais reporte le premier événement jusqu'à la fin
-  de la génération. `FILTER_OUTPUT=false` conserve le streaming progressif.
+* GLiNER n'est utilisé que dans le sens utilisateur vers LLM. La réponse du LLM
+  n'est ni analysée ni modifiée et conserve son streaming natif.
 * Le modèle peut rater des PII, surtout hors anglais ou avec formats métier spécifiques.
 * Pour contexte gouvernement / médical / RH / finance, valider sur corpus interne et ajouter éventuellement règles regex métier ou fine-tuning.
 
@@ -188,15 +208,14 @@ sudo journalctl -u api-llm-privacy-proxy-gliner2 -f
 
 ## Dépannage
 
-Si les logs contiennent encore `GLiNER2.extract_entities() missing 1 required positional argument: 'entity_types'`, le service lancé n'utilise pas ce code. Vérifier `/health` : le champ `revision` doit valoir `gliner2.5-buffered-streaming`, puis relancer `./install.sh` et redémarrer le service systemd.
+Si les logs contiennent encore `GLiNER2.extract_entities() missing 1 required positional argument: 'entity_types'`, le service lancé n'utilise pas ce code. Vérifier `/health` : le champ `revision` doit valoir `gliner2.5-input-filter-native-streaming`, puis relancer `./install.sh` et redémarrer le service systemd.
 
-De même, `streaming_requires_filter_output_disabled` n'existe plus dans cette
-révision. Si cette erreur apparaît encore, elle provient d'un ancien processus
-ou d'une ancienne image. Vérifier d'abord :
+Pour confirmer que le service utilise bien la version avec filtrage d'entrée
+uniquement et streaming natif, vérifier :
 
 ```bash
 curl -s http://127.0.0.1:8088/health | jq -r .revision
-# résultat attendu : gliner2.5-buffered-streaming
+# résultat attendu : gliner2.5-input-filter-native-streaming
 ```
 
 Pour Kubernetes, publier l'image avec un nouveau tag (par exemple `1.0.2`) puis

@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -131,42 +131,45 @@ def test_entity_labels_cannot_break_placeholder_syntax():
     assert placeholder == "[EMAIL_MALICIOUS_1]"
 
 
-def test_buffered_streaming_response_is_a_chat_completion_chunk():
-    source = app.JSONResponse(
-        {
-            "id": "chatcmpl-test",
-            "object": "chat.completion",
-            "model": "test-anonym",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "[PERSON_1]"},
-                    "finish_reason": "stop",
-                }
-            ],
-        }
+def test_stream_request_is_sanitized_before_native_upstream_stream(monkeypatch):
+    request = SimpleNamespace(
+        method="POST",
+        headers={},
+        stream=lambda: _request_chunks(
+            b'{"model":"test-anonym","stream":true,'
+            b'"messages":[{"role":"user","content":"Jane Doe"}]}'
+        ),
     )
-
-    response = app.buffered_streaming_response(
-        "chat/completions", json.loads(source.body), source
+    sanitized = {
+        "model": "test-anonym",
+        "stream": True,
+        "messages": [{"role": "user", "content": "[PERSON_1]"}],
+    }
+    sanitize_payload = AsyncMock(
+        return_value=(sanitized, RedactionStats(tokens=2, spans=1))
     )
+    streamed_response = app.StreamingResponse(iter([b"data: first\n\n"]))
+    forward = AsyncMock(return_value=streamed_response)
+    monkeypatch.setattr(app.sanitizer, "sanitize_payload", sanitize_payload)
+    monkeypatch.setattr(app, "forward_request", forward)
+    monkeypatch.setattr(app.settings, "upstream_base_url", "http://upstream/v1")
 
-    async def collect_body():
-        return b"".join([chunk async for chunk in response.body_iterator])
+    response = asyncio.run(app.proxy_openai(request, "chat/completions"))
 
-    body = asyncio.run(collect_body()).decode()
-    assert response.media_type == "text/event-stream"
-    assert '"object":"chat.completion.chunk"' in body
-    assert '"delta":{"role":"assistant","content":"[PERSON_1]"}' in body
-    assert "data: [DONE]" in body
-    assert '"message"' not in body
+    sanitize_payload.assert_awaited_once()
+    assert forward.await_args.args[2]["messages"][0]["content"] == "[PERSON_1]"
+    assert forward.await_args.kwargs["stream"] is True
+    assert response is streamed_response
 
 
-def test_revision_identifies_buffered_streaming_build():
-    assert app.APP_REVISION == "gliner2.5-buffered-streaming"
-    assert "streaming_requires_filter_output_disabled" not in Path(
-        app.__file__
-    ).read_text(encoding="utf-8")
+async def _request_chunks(*chunks):
+    for chunk in chunks:
+        yield chunk
+
+
+def test_revision_identifies_native_streaming_build():
+    assert app.APP_REVISION == "gliner2.5-input-filter-native-streaming"
+    assert "settings.filter_output" not in Path(app.__file__).read_text(encoding="utf-8")
 
 
 def test_prometheus_escapes_untrusted_entity_labels():

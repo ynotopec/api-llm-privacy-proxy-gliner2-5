@@ -64,7 +64,6 @@ config:
   DEVICE: auto
   TORCH_DTYPE: auto
   GLINER_ATTENTION_IMPLEMENTATION: eager
-  FILTER_OUTPUT: "true"
   MODEL_SUFFIX: -anonym
   MODEL_IDLE_UNLOAD_SECONDS: "300"
   MODEL_IDLE_CHECK_SECONDS: "30"
@@ -111,4 +110,3 @@ topologySpreadConstraints: []
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
-
