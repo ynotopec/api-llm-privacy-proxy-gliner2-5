@@ -123,6 +123,12 @@ def test_llm_enabled_setting_is_respected(monkeypatch):
     assert Settings().llm_enabled is False
 
 
+def test_output_filter_setting_is_not_exposed(monkeypatch):
+    monkeypatch.setenv("FILTER_OUTPUT", "true")
+
+    assert not hasattr(Settings(), "filter_output")
+
+
 def test_gliner25_extract_entities_uses_scored_spans():
     sanitizer = GLiNER2Sanitizer(
         DEFAULT_PRIVACY_MODEL_ID,
@@ -153,6 +159,26 @@ def test_gliner25_extract_entities_uses_scored_spans():
         include_confidence=True,
         include_spans=True,
     )
+
+
+def test_gliner_receives_the_complete_input_string_once():
+    sanitizer = GLiNER2Sanitizer(
+        DEFAULT_PRIVACY_MODEL_ID,
+        entity_types=["email"],
+    )
+    sanitizer.model = Mock()
+    sanitizer.model.extract_entities.return_value = []
+    sanitizer.ensure_loaded = AsyncMock()
+    complete_input = "Contact jane@example.com for assistance"
+
+    asyncio.run(
+        sanitizer.sanitize_text(
+            complete_input, RedactionContext(), RedactionStats()
+        )
+    )
+
+    sanitizer.model.extract_entities.assert_called_once()
+    assert sanitizer.model.extract_entities.call_args.args[0] == complete_input
 
 
 def test_gliner25_label_keyed_result_is_parsed():

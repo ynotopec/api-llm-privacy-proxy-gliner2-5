@@ -19,7 +19,9 @@ log = logging.getLogger("privacy-proxy.gliner2")
 class GLiNER2Sanitizer(PrivacySanitizerBase):
     """Entity extraction via GLiNER2.5.
 
-    Uses ``extract_entities`` with threshold + include_spans.
+    Uses ``extract_entities`` with threshold + include_spans. GLiNER2's public
+    extractor consumes a complete string and returns the detected spans as one
+    result; it does not expose token-stream input or incremental span output.
     """
 
     def __init__(self, model_id: str, device: str = "auto",
@@ -157,6 +159,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
     async def sanitize_text(
         self, text: str, ctx: RedactionContext, stats: RedactionStats,
     ) -> str:
+        """Sanitize one complete text before it is forwarded upstream."""
         max_chars = int(os.getenv("MAX_STRING_CHARS", "200000"))
 
         if not text or len(text) > max_chars:

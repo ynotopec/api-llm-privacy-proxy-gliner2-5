@@ -62,9 +62,6 @@ class Settings:
     torch_dtype: str = os.getenv("TORCH_DTYPE", "auto")
 
     # ── redaction behaviour ───────────────────────────────────────
-    filter_output: bool = _parse_bool(
-        os.getenv("FILTER_OUTPUT", "true"), True
-    )
     min_entity_score: float = float(os.getenv("MIN_ENTITY_SCORE", "0.50"))
     max_string_chars: int = int(os.getenv("MAX_STRING_CHARS", "200000"))
     max_request_bytes: int = int(os.getenv("MAX_REQUEST_BYTES", "10485760"))

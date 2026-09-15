@@ -17,7 +17,7 @@ from privacy_proxy_core.redaction import PrivacySanitizerBase, RedactionContext,
 from privacy_proxy_core.metrics import GlobalMetrics, metrics
 from privacy_proxy_core.settings import Settings, settings, suffix_model_id, unsuffix_model_id, unsuffix_model_path
 
-APP_REVISION = "gliner2.5-buffered-streaming"
+APP_REVISION = "gliner2.5-input-filter-native-streaming"
 
 
 class GLiNER2ProxySanitizer(PrivacySanitizerBase):
@@ -395,53 +395,6 @@ def llm_disabled_response_payload(full_path: str, sanitized_payload: Any, in_sta
     }
 
 
-def completion_as_stream_event(full_path: str, payload: Any) -> Any:
-    """Convert a buffered completion response into one OpenAI-compatible event."""
-    if not isinstance(payload, dict):
-        return payload
-
-    event = dict(payload)
-    choices = event.get("choices")
-    if full_path == "chat/completions" and isinstance(choices, list):
-        event["object"] = "chat.completion.chunk"
-        streamed_choices: list[Any] = []
-        for choice in choices:
-            if not isinstance(choice, dict):
-                streamed_choices.append(choice)
-                continue
-            streamed_choice = dict(choice)
-            message = streamed_choice.pop("message", None)
-            if isinstance(message, dict):
-                streamed_choice["delta"] = message
-            streamed_choices.append(streamed_choice)
-        event["choices"] = streamed_choices
-    return event
-
-
-def buffered_streaming_response(
-    full_path: str, payload: Any, source: Response,
-) -> StreamingResponse:
-    """Emit an output-filtered response as a single safe SSE event."""
-    event = completion_as_stream_event(full_path, payload)
-    body = (
-        f"data: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}"
-        "\n\ndata: [DONE]\n\n"
-    ).encode("utf-8")
-    headers = headers_for_modified_body(source)
-    headers.pop("content-type", None)
-    headers.pop("Content-Type", None)
-
-    async def events():
-        yield body
-
-    return StreamingResponse(
-        events(),
-        status_code=source.status_code,
-        headers=headers,
-        media_type="text/event-stream",
-    )
-
-
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     delegate = sanitizer._delegate
@@ -450,7 +403,6 @@ async def health() -> Dict[str, Any]:
         "model": settings.privacy_model_id,
         "upstream_configured": bool(settings.upstream_base_url),
         "llm_enabled": settings.llm_enabled,
-        "filter_output": settings.filter_output,
         "model_suffix": settings.model_suffix,
         "device": settings.device,
         "resolved_device": getattr(delegate, "_model_device", "unknown"),
@@ -502,10 +454,6 @@ async def proxy_openai(req: Request, full_path: str) -> Response:
 
     sanitized_payload, in_stats = await sanitizer.sanitize_payload(payload, settings)
     sanitized_payload = rewrite_request_model_ids(sanitized_payload)
-    if wants_stream and settings.filter_output and isinstance(sanitized_payload, dict):
-        # Ask upstream for one complete response so entity spans cannot cross
-        # SSE event boundaries.  The filtered result is converted back to SSE.
-        sanitized_payload["stream"] = False
     await metrics.add(in_stats.tokens, in_stats.spans, in_stats.labels)
 
     if not settings.llm_enabled:
@@ -516,7 +464,7 @@ async def proxy_openai(req: Request, full_path: str) -> Response:
         response.headers["x-privacy-filter-latency-ms"] = str(round((time.perf_counter() - start) * 1000, 2))
         return response
 
-    if wants_stream and not settings.filter_output:
+    if wants_stream:
         return await forward_request(req, full_path, sanitized_payload, stream=True)
 
     upstream_resp = await forward_request(req, full_path, sanitized_payload, stream=False)
@@ -535,22 +483,11 @@ async def proxy_openai(req: Request, full_path: str) -> Response:
     except Exception:
         return rewritten_resp
 
-    out_stats = RedactionStats()
-    if settings.filter_output:
-        response_payload, out_stats = await sanitizer.sanitize_payload(response_payload, settings)
-        await metrics.add(out_stats.tokens, out_stats.spans, out_stats.labels, count_request=False)
-
-    if wants_stream and settings.filter_output:
-        return buffered_streaming_response(full_path, response_payload, rewritten_resp)
-
     final = JSONResponse(
         content=response_payload,
         status_code=rewritten_resp.status_code,
         headers=headers_for_modified_body(rewritten_resp),
     )
-    if settings.filter_output:
-        final.headers["x-privacy-filtered-output-tokens"] = str(out_stats.tokens)
-        final.headers["x-privacy-filtered-output-spans"] = str(out_stats.spans)
     return final
 
 
