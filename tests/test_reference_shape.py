@@ -112,7 +112,50 @@ def test_gliner25_is_loaded_directly_on_the_resolved_device(
     )
 
 
-def test_auto_device_falls_back_to_cpu_when_cuda_initialization_fails(
+def test_auto_device_uses_cpu_when_cuda_preflight_fails(
+    monkeypatch, tmp_path
+):
+    tokenizer_config = tmp_path / "tokenizer_config.json"
+    tokenizer_config.write_text(json.dumps({}), encoding="utf-8")
+    loaded_model = Mock()
+    auto_extractor = Mock()
+    auto_extractor.from_pretrained.return_value = loaded_model
+    monkeypatch.setattr(
+        "privacy_proxy_core.sanitizers.gliner2.torch.cuda.is_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "privacy_proxy_core.sanitizers.gliner2.torch.empty",
+        Mock(side_effect=RuntimeError("NVML initialization failed")),
+        raising=False,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "gliner2",
+        SimpleNamespace(AutoExtractor=auto_extractor),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(hf_hub_download=lambda *args, **kwargs: tokenizer_config),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "gliner2.configuration",
+        SimpleNamespace(ExtractorConfig=Mock(from_dict=Mock(return_value=Mock()))),
+    )
+    sanitizer = GLiNER2Sanitizer(DEFAULT_PRIVACY_MODEL_ID, device="auto")
+
+    asyncio.run(sanitizer.ensure_loaded())
+
+    auto_extractor.from_pretrained.assert_called_once()
+    assert auto_extractor.from_pretrained.call_args.kwargs["map_location"] == "cpu"
+    assert sanitizer.model is loaded_model
+    assert sanitizer._model_device == "cpu"
+    assert sanitizer._cuda_available is True
+
+
+def test_auto_device_retries_on_cpu_if_load_fails_after_preflight(
     monkeypatch, tmp_path
 ):
     tokenizer_config = tmp_path / "tokenizer_config.json"
@@ -120,17 +163,17 @@ def test_auto_device_falls_back_to_cpu_when_cuda_initialization_fails(
     loaded_model = Mock()
     auto_extractor = Mock()
     auto_extractor.from_pretrained.side_effect = [
-        RuntimeError("NVML initialization failed"),
+        RuntimeError("CUDA failed"),
         loaded_model,
     ]
     monkeypatch.setattr(
-        "privacy_proxy_core.sanitizers.gliner2.torch.cuda.is_available",
-        lambda: True,
+        "privacy_proxy_core.sanitizers.gliner2.torch.cuda.is_available", lambda: True
+    )
+    monkeypatch.setattr(
+        "privacy_proxy_core.sanitizers.gliner2.torch.empty", Mock(), raising=False
     )
     monkeypatch.setitem(
-        sys.modules,
-        "gliner2",
-        SimpleNamespace(AutoExtractor=auto_extractor),
+        sys.modules, "gliner2", SimpleNamespace(AutoExtractor=auto_extractor)
     )
     monkeypatch.setitem(
         sys.modules,
@@ -152,7 +195,6 @@ def test_auto_device_falls_back_to_cpu_when_cuda_initialization_fails(
     ] == ["cuda", "cpu"]
     assert sanitizer.model is loaded_model
     assert sanitizer._model_device == "cpu"
-    assert sanitizer._cuda_available is True
 
 
 def test_explicit_cuda_does_not_silently_fall_back(monkeypatch, tmp_path):

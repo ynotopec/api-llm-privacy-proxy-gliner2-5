@@ -97,6 +97,19 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 return
             device = self._resolve_device(self.device)
             self._cuda_available = bool(torch.cuda.is_available())
+            if device == "cuda" and self.device.strip().lower() in ("", "auto"):
+                try:
+                    # is_available() can be true even when the first real CUDA
+                    # operation fails while initializing the driver or NVML.
+                    # Probe before loading the checkpoint so an automatic CPU
+                    # fallback does not deserialize the model twice.
+                    torch.empty(1, device="cuda")
+                except Exception as exc:
+                    log.warning(
+                        "CUDA preflight failed (%s); loading GLiNER2 on CPU",
+                        exc,
+                    )
+                    device = "cpu"
             log.info("Loading GLiNER2 model: %s on %s", self.model_id, device)
 
             from gliner2 import AutoExtractor
@@ -159,7 +172,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                         map_location=device,
                         **load_options,
                     )
-                except Exception:
+                except Exception as exc:
                     # torch.cuda.is_available() only checks that CUDA appears
                     # usable.  Driver/NVML initialization can still fail when
                     # the first model is moved (for example in a container
@@ -169,8 +182,8 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                     if self.device.strip().lower() not in ("", "auto") or device != "cuda":
                         raise
                     log.warning(
-                        "CUDA model initialization failed; retrying GLiNER2 on CPU",
-                        exc_info=True,
+                        "CUDA model initialization failed (%s); retrying GLiNER2 on CPU",
+                        exc,
                     )
                     self.model = None
                     gc.collect()
