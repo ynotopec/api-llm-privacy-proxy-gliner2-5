@@ -49,7 +49,12 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
         self._model_device = "unloaded"
         gc.collect()
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                # A broken CUDA/NVML installation can make even cache cleanup
+                # fail.  Unloading a CPU fallback must remain safe.
+                log.warning("Unable to empty the CUDA cache", exc_info=True)
 
     async def start_idle_watcher(self, check_interval: int = 30) -> None:
         """Background task to periodically check idle timeout."""
@@ -139,7 +144,7 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             # Boundary extractors must be constructed on the target device.
             # Moving the fully initialized wrapper afterwards is unsupported
             # by some GLiNER2.5 releases and leaves the model on CPU.
-            load_options = {"map_location": device}
+            load_options: dict[str, Any] = {}
             if extractor_config is not None:
                 load_options["config"] = extractor_config
             with warnings.catch_warnings():
@@ -148,10 +153,33 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                     message=r"`torch\.jit\.script` is deprecated.*",
                     category=FutureWarning,
                 )
-                self.model = AutoExtractor.from_pretrained(
-                    self.model_id,
-                    **load_options,
-                )
+                try:
+                    self.model = AutoExtractor.from_pretrained(
+                        self.model_id,
+                        map_location=device,
+                        **load_options,
+                    )
+                except Exception:
+                    # torch.cuda.is_available() only checks that CUDA appears
+                    # usable.  Driver/NVML initialization can still fail when
+                    # the first model is moved (for example in a container
+                    # with stale or incomplete GPU passthrough).  DEVICE=auto
+                    # promises best-effort acceleration, so retry on CPU;
+                    # DEVICE=cuda remains strict and surfaces the error.
+                    if self.device.strip().lower() not in ("", "auto") or device != "cuda":
+                        raise
+                    log.warning(
+                        "CUDA model initialization failed; retrying GLiNER2 on CPU",
+                        exc_info=True,
+                    )
+                    self.model = None
+                    gc.collect()
+                    device = "cpu"
+                    self.model = AutoExtractor.from_pretrained(
+                        self.model_id,
+                        map_location=device,
+                        **load_options,
+                    )
             self._model_device = device
             self._touch()
             log.info("GLiNER2 loaded on %s", device)
