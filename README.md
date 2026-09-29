@@ -169,7 +169,7 @@ curl -s http://127.0.0.1:8088/metrics \
   est terminée, le proxy transmet le même `stream=true` à l'API OpenAI-compatible
   et relaie chaque chunk sans attendre la fin de la génération.
 * Les chaînes trop longues pour être filtrées et les payloads hors limites sont refusés avec HTTP 413 plutôt que transmis sans anonymisation.
-* Le client HTTP upstream est mutualisé (pool de connexions). L'inférence synchrone est déportée hors de la boucle événementielle et sa concurrence est bornée par `MAX_CONCURRENT_INFERENCES`.
+* Le client HTTP upstream est mutualisé (pool de connexions). L'inférence synchrone est déportée hors de la boucle événementielle, sa concurrence est bornée par `MAX_CONCURRENT_INFERENCES` et PyTorch s'exécute sous `inference_mode` afin de ne pas conserver de graphes d'autograd inutiles en RAM/VRAM.
 * En production, définir `INBOUND_API_KEYS`; sans cette variable, les routes `/v1` sont volontairement publiques.
 * Les jetons définis dans `INBOUND_API_KEYS` ne sont jamais transmis à l'upstream; seul `UPSTREAM_API_KEY`, lorsqu'il est configuré, alimente son en-tête `Authorization`.
 * `LLM_ENABLED=false` rend le LLM optionnel : les requêtes POST `/v1/chat/completions` gardent le format OpenAI-compatible (`choices[0].message.content`) avec le contenu anonymisé, sans appeler `UPSTREAM_BASE_URL`. Les autres endpoints POST retournent le payload anonymisé et les statistiques de filtrage.

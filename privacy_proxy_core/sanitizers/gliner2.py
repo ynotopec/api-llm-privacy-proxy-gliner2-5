@@ -212,12 +212,9 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
                 self._touch()
                 model = self.model
                 result = await asyncio.to_thread(
-                    model.extract_entities,
+                    self._extract_entities,
+                    model,
                     text,
-                    self.entity_types,
-                    threshold=self.min_score,
-                    include_confidence=True,
-                    include_spans=True,
                 )
         except Exception as exc:
             log.exception("GLiNER2 inference failed")
@@ -228,6 +225,28 @@ class GLiNER2Sanitizer(PrivacySanitizerBase):
             return text
 
         return self._build_output(text, spans, ctx, stats)
+
+    def _extract_entities(self, model: Any, text: str) -> Any:
+        """Run model inference without constructing an autograd graph.
+
+        ``AutoExtractor`` is a high-level wrapper and not every supported
+        release consistently enters PyTorch's inference context itself.  A
+        graph created for every request retains intermediate tensors until the
+        extractor result is released, which produces large transient RSS/VRAM
+        growth under load.  The proxy never trains the model, so disabling
+        autograd here is both safe and substantially reduces inference memory.
+
+        The context belongs inside this synchronous helper because PyTorch
+        grad mode is thread-local and extraction runs in ``asyncio.to_thread``.
+        """
+        with torch.inference_mode():
+            return model.extract_entities(
+                text,
+                self.entity_types,
+                threshold=self.min_score,
+                include_confidence=True,
+                include_spans=True,
+            )
 
     def _parse_result(self, text: str, result: Any) -> List[Tuple[int, int, str]]:
         spans: List[Tuple[int, int, str]] = []
