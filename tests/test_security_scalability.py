@@ -61,6 +61,45 @@ def test_inference_runs_outside_event_loop(monkeypatch):
     to_thread.assert_called_once()
 
 
+def test_inference_uses_inference_mode_in_worker_thread(monkeypatch):
+    sanitizer = GLiNER2Sanitizer("test/model", entity_types=["email"])
+    inference_mode_active = False
+    extraction_modes = []
+
+    class InferenceMode:
+        def __enter__(self):
+            nonlocal inference_mode_active
+            inference_mode_active = True
+
+        def __exit__(self, *args):
+            nonlocal inference_mode_active
+            inference_mode_active = False
+
+    monkeypatch.setattr(
+        "privacy_proxy_core.sanitizers.gliner2.torch.inference_mode",
+        InferenceMode,
+        raising=False,
+    )
+    sanitizer.model = Mock()
+    sanitizer.model.extract_entities.side_effect = lambda *args, **kwargs: (
+        extraction_modes.append(inference_mode_active) or []
+    )
+
+    async def already_loaded():
+        return None
+
+    sanitizer.ensure_loaded = already_loaded
+
+    asyncio.run(
+        sanitizer.sanitize_text(
+            "hello", RedactionContext(), RedactionStats()
+        )
+    )
+
+    assert extraction_modes == [True]
+    assert inference_mode_active is False
+
+
 def test_auth_uses_constant_time_comparison(monkeypatch):
     monkeypatch.setattr(app.settings, "inbound_api_keys", ["expected"])
     compare = Mock(return_value=False)
