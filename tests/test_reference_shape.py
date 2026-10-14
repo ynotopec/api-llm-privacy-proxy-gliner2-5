@@ -229,6 +229,28 @@ def test_privacy_model_can_still_be_configured(monkeypatch):
     assert Settings().privacy_model_id == "organization/custom-gliner2.5"
 
 
+@pytest.mark.parametrize("value", [None, "", "invalid", "false"])
+def test_llm_is_disabled_unless_explicitly_enabled(monkeypatch, value):
+    monkeypatch.setenv("UPSTREAM_BASE_URL", "http://localhost:8000/v1")
+    if value is None:
+        monkeypatch.delenv("LLM_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("LLM_ENABLED", value)
+
+    assert Settings().llm_requested is False
+    assert Settings().llm_enabled is False
+
+
+def test_llm_can_be_explicitly_enabled(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_BASE_URL", "http://localhost:8000/v1")
+    monkeypatch.setenv("LLM_ENABLED", "true")
+
+    assert Settings().llm_enabled is True
+
+    monkeypatch.delenv("UPSTREAM_BASE_URL", raising=False)
+    assert Settings().llm_enabled is False
+
+
 def test_llm_enabled_setting_is_respected(monkeypatch):
     monkeypatch.setenv("UPSTREAM_BASE_URL", "http://localhost:8000/v1")
     monkeypatch.setenv("LLM_ENABLED", "false")
