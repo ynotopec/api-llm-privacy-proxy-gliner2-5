@@ -42,7 +42,7 @@ class Settings:
     )
     llm_requested: bool = field(
         default_factory=lambda: _parse_bool(
-            os.getenv("LLM_ENABLED", "true"), True
+            os.getenv("LLM_ENABLED", "false"), False
         )
     )
 

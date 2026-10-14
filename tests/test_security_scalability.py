@@ -192,6 +192,7 @@ def test_stream_request_is_sanitized_before_native_upstream_stream(monkeypatch):
     monkeypatch.setattr(app.sanitizer, "sanitize_payload", sanitize_payload)
     monkeypatch.setattr(app, "forward_request", forward)
     monkeypatch.setattr(app.settings, "upstream_base_url", "http://upstream/v1")
+    monkeypatch.setattr(app.settings, "llm_requested", True)
 
     response = asyncio.run(app.proxy_openai(request, "chat/completions"))
 

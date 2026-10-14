@@ -59,7 +59,7 @@ resources:
 # Environment values that are safe to store in a ConfigMap.
 config:
   UPSTREAM_BASE_URL: ""
-  LLM_ENABLED: "true"
+  LLM_ENABLED: "false"
   PRIVACY_MODEL_ID: fastino/gliner2.5-multi-v1
   DEVICE: auto
   TORCH_DTYPE: auto

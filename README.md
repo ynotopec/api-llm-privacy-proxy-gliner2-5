@@ -66,7 +66,7 @@ permet de modifier ce choix pour un autre encodeur.
 INBOUND_API_KEYS='change-me'
 UPSTREAM_BASE_URL='http://127.0.0.1:8000/v1'
 UPSTREAM_API_KEY=''
-LLM_ENABLED=true  # false => retourne uniquement le payload anonymisé, sans appeler l'upstream LLM
+LLM_ENABLED=false  # défaut : anonymisation seule ; true active les appels à l'upstream LLM
 PRIVACY_MODEL_ID='fastino/gliner2.5-multi-v1'
 PRIVACY_ENTITY_TYPES='person,full_name,first_name,last_name,date_of_birth,email,phone_number,address,street_address,city,state_or_region,postal_code,country,government_id,national_id_number,passport_number,drivers_license_number,tax_id,bank_account,account_number,iban,payment_card,card_number,username,ip_address,password,api_key,access_token,secret'
 DEVICE=auto  # auto => cuda si torch.cuda.is_available(), sinon cpu
@@ -172,7 +172,7 @@ curl -s http://127.0.0.1:8088/metrics \
 * Le client HTTP upstream est mutualisé (pool de connexions). L'inférence synchrone est déportée hors de la boucle événementielle, sa concurrence est bornée par `MAX_CONCURRENT_INFERENCES` et PyTorch s'exécute sous `inference_mode` afin de ne pas conserver de graphes d'autograd inutiles en RAM/VRAM.
 * En production, définir `INBOUND_API_KEYS`; sans cette variable, les routes `/v1` sont volontairement publiques.
 * Les jetons définis dans `INBOUND_API_KEYS` ne sont jamais transmis à l'upstream; seul `UPSTREAM_API_KEY`, lorsqu'il est configuré, alimente son en-tête `Authorization`.
-* `LLM_ENABLED=false` rend le LLM optionnel : les requêtes POST `/v1/chat/completions` gardent le format OpenAI-compatible (`choices[0].message.content`) avec le contenu anonymisé, sans appeler `UPSTREAM_BASE_URL`. Les autres endpoints POST retournent le payload anonymisé et les statistiques de filtrage.
+* `LLM_ENABLED` vaut `false` par défaut. Pour appeler le LLM, définir `LLM_ENABLED=true` et `UPSTREAM_BASE_URL`. En mode `false` : les requêtes POST `/v1/chat/completions` gardent le format OpenAI-compatible (`choices[0].message.content`) avec le contenu anonymisé, sans appeler `UPSTREAM_BASE_URL`. Les autres endpoints POST retournent le payload anonymisé et les statistiques de filtrage.
 * Les modèles exposés au client sont suffixés avec `-anonym` (`MODEL_SUFFIX`) et seul le champ `model` OpenAI de premier niveau est désuffixé avant envoi à l’upstream.
 * Les configurations utilisateur comme `thinking` / `reasoning` sont préservées telles quelles par défaut.
 * GLiNER n'est utilisé que dans le sens utilisateur vers LLM. La réponse du LLM
